@@ -62,11 +62,12 @@ class Dataset(ScanNetBaseDataset):
         ## load annotations
         assert split_set in ["train", "val"]
         
-        self.scanrefer = json.load(
-                open('/home/admin/Projects/EmbodiedScan/data/small_size_object/train_small_than_1e-3_wdes.json', 'r'))
+        self.scanrefer = json.load(open('/home/dell/Projects/LL3DA/results/train_small_than_1e-3_wdes.json', 'r'))
             
         
         self.annotations = self.scanrefer
+        for i in range(len(self.annotations)):
+            self.annotations[i]['global_ann_id'] = str(i)
         ## USer: below is not compatible with the generate size filter dataset
         # if self.split != 'train' and not args.special_dataset:
         #     self.annotations = [{'scene_id': scene_id} for scene_id in self.scan_names]
@@ -169,25 +170,42 @@ class Dataset(ScanNetBaseDataset):
         tgt_box = self.annotations[idx]['tgt_bbox']
         ## USer: below is used for only input answer related pcs to model
         if self.args.adaptive_pcd_input:
+            try:
+                cache_dir = 'results/process_datasets/adaptive_pcds_adapt_scale_1w/small_object_caption'
+                if not os.path.exists(cache_dir):
+                    os.makedirs(cache_dir)
+                exist_npy = os.listdir(cache_dir)
+                exist_npy = [npy.split(".")[0] for npy in exist_npy]
+                uni_key = f"{scan_name}_{object_id}_{object_name}"
+                cache_path = f'{cache_dir}/{uni_key}'
 
-            cache_dir = 'results/process_datasets/adaptive_pcds_adapt_scale_1w/small_object_caption'
-            exist_npy = os.listdir(cache_dir)
-            exist_npy = [npy.split(".")[0] for npy in exist_npy]
-            uni_key = f"{scan_name}_{object_id}_{object_name}"
-            cache_path = f'{cache_dir}/{uni_key}'
+                # dense_ret_dict = self._get_scan_data_adaptive(scan_name)
+                source_dir = '/home/dell/Projects/LL3DA/data/scannet/scannet_data'
+                mesh_vertices = np.load(os.path.join(f'{source_dir}_dense', scan_name) + "_aligned_vert.npy")
 
-            dense_ret_dict = self._get_scan_data_adaptive(scan_name)
-        
-
-            from src.utils import dense_pointclouds_from_bbox
-            if uni_key in exist_npy:
-                ret_dict['point_clouds'], ret_dict['sample_prob'] = np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['point_clouds'], np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['sample_prob']
-            else:
-                ret_dict['point_clouds'], ret_dict['sample_prob'] = dense_pointclouds_from_bbox(dense_ret_dict["point_clouds"], tgt_box , tgt_box[3]*tgt_box[4]*tgt_box[5])
-                np.save(cache_path, {'point_clouds':ret_dict['point_clouds'], 'sample_prob':ret_dict['sample_prob']})
-            
-            ret_dict["point_cloud_dims_min"] = ret_dict["point_clouds"][..., :3].min(axis=0)
-            ret_dict["point_cloud_dims_max"] = ret_dict["point_clouds"][..., :3].max(axis=0)
+                point_cloud = mesh_vertices[:, 0:6]
+                MEAN_COLOR_RGB = np.array([109.8, 97.2, 83.8])
+                point_cloud[:, 3:] = (point_cloud[:, 3:] - MEAN_COLOR_RGB) / 256.0
+                normals = mesh_vertices[:,6:9]
+                point_cloud = np.concatenate([point_cloud, normals], 1)
+                    
+                floor_height = np.percentile(point_cloud[:, 2], 0.99)
+                height = point_cloud[:, 2] - floor_height
+                point_cloud = np.concatenate([point_cloud, np.expand_dims(height, 1)], 1)
+                
+                
+                from src.utils import dense_pointclouds_from_bbox
+                if uni_key in exist_npy:
+                    ret_dict['point_clouds'], ret_dict['sample_prob'] = np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['point_clouds'], np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['sample_prob']
+                else:
+                    ret_dict['point_clouds'], ret_dict['sample_prob'] = dense_pointclouds_from_bbox(point_cloud, tgt_box , tgt_box[3]*tgt_box[4]*tgt_box[5])
+                    np.save(cache_path, {'point_clouds':ret_dict['point_clouds'], 'sample_prob':ret_dict['sample_prob']})
+                
+                ret_dict["point_cloud_dims_min"] = ret_dict["point_clouds"][..., :3].min(axis=0)
+                ret_dict["point_cloud_dims_max"] = ret_dict["point_clouds"][..., :3].max(axis=0)
+            except Exception as e:
+                ret_dict['sample_prob'] = np.ones_like(ret_dict['point_clouds'][:,0])
+                print(e)
         
         
         ## reference object

@@ -5,8 +5,45 @@ from tqdm import tqdm
 import utils.pc_util as pc_util
 import open3d
 import time
+from copy import deepcopy
 
+def _farthest_point_sampling(points, num_points):
+    """
+    Perform farthest point sampling (FPS) on a point cloud.
 
+    Args:
+        points (numpy array): Input point cloud with shape (N, D), where N is the number of points and D is the dimensionality.
+        num_points (int): Number of points to be sampled.
+
+    Returns:
+        selected_points (numpy array): Sampled points with shape (num_points, D).
+    """
+    N = points.shape[0]
+    selected_indices = []
+    selected_points = []
+
+    # Randomly select the first point
+    first_index = np.random.randint(0, N)
+    selected_indices.append(first_index)
+    selected_points.append(points[first_index])
+
+    # Calculate distance to the first point
+    distances = np.linalg.norm(points[:,:3] - points[first_index][:3], axis=1)
+
+    for _ in tqdm(range(1, num_points),desc='FPS'):
+        # Find the point farthest from the selected points
+        farthest_index = np.argmax(distances)
+
+        # Update distances
+        new_distances = np.linalg.norm(points[:,:3] - points[farthest_index][:3], axis=1)
+        distances = np.minimum(distances, new_distances)
+
+        selected_indices.append(farthest_index)
+        selected_points.append(points[farthest_index])
+
+    selected_points = np.array(selected_points)
+
+    return selected_points
 
 ## USer: below are used for dense or inflate pointcloud
 def dense_pointclouds(raw_pointclouds, instance_pointclouds, target_obj_id_list, object_size, object_num):
@@ -31,43 +68,6 @@ def dense_pointclouds(raw_pointclouds, instance_pointclouds, target_obj_id_list,
     
     scale = int(scale/object_num) if scale/object_num > 1 else 1
     
-    def _farthest_point_sampling(points, num_points):
-        """
-        Perform farthest point sampling (FPS) on a point cloud.
-
-        Args:
-            points (numpy array): Input point cloud with shape (N, D), where N is the number of points and D is the dimensionality.
-            num_points (int): Number of points to be sampled.
-
-        Returns:
-            selected_points (numpy array): Sampled points with shape (num_points, D).
-        """
-        N = points.shape[0]
-        selected_indices = []
-        selected_points = []
-
-        # Randomly select the first point
-        first_index = np.random.randint(0, N)
-        selected_indices.append(first_index)
-        selected_points.append(points[first_index])
-
-        # Calculate distance to the first point
-        distances = np.linalg.norm(points[:,:3] - points[first_index][:3], axis=1)
-
-        for _ in tqdm(range(1, num_points),desc='FPS'):
-            # Find the point farthest from the selected points
-            farthest_index = np.argmax(distances)
-
-            # Update distances
-            new_distances = np.linalg.norm(points[:,:3] - points[farthest_index][:3], axis=1)
-            distances = np.minimum(distances, new_distances)
-
-            selected_indices.append(farthest_index)
-            selected_points.append(points[farthest_index])
-
-        selected_points = np.array(selected_points)
-
-        return selected_points
     
     def _get_inflate_axis_aligned_bounding_box(pcs, remaining_pcd, scale=scale, ):
         '''
@@ -175,15 +175,15 @@ def dense_pointclouds_from_bbox(raw_pointclouds, tgt_bbox, object_size, object_n
     REMAIN_PROB = 0.2
     
     if object_size <= 0.001:
-        scale = 10
+        inflate_scale = 10
     elif 0.01 >= object_size > 0.001:
-        scale = 5
+        inflate_scale = 5
     elif 0.1 >= object_size > 0.01:
-        scale = 2
+        inflate_scale = 2
     elif object_size > 0.1:
-        scale = 1
+        inflate_scale = 1
     
-    scale = int(scale/object_num) if scale/object_num > 1 else 1
+    inflate_scale = int(inflate_scale/object_num) if inflate_scale/object_num > 1 else 1
     
     def _9dof_to_box(box):
         if isinstance(box, list):
@@ -224,29 +224,32 @@ def dense_pointclouds_from_bbox(raw_pointclouds, tgt_bbox, object_size, object_n
     tgt_obj_indices = []
     indices_within_bbox = []
     bbox_9dof = _9dof_to_box(tgt_bbox)
+    
+    
+    # pcd = open3d.geometry.PointCloud()
+    # pcd.points = open3d.utility.Vector3dVector(raw_pointclouds[:,:3])
+    # pcd.colors = open3d.utility.Vector3dVector(raw_pointclouds[:,3:6])
+    # open3d.visualization.draw_geometries([pcd, bbox_9dof])
+    
     for i in range(raw_pointclouds.shape[0]):
-        if point_inside_obb(raw_pointclouds[i,:3], bbox_9dof, 1):
+        if point_inside_obb(raw_pointclouds[i,:3], deepcopy(bbox_9dof), 1):
             tgt_obj_indices.append(i)
-        elif point_inside_obb(raw_pointclouds[i,:3], bbox_9dof, scale):
+        elif point_inside_obb(raw_pointclouds[i,:3], deepcopy(bbox_9dof), inflate_scale):
             indices_within_bbox.append(i)
             
     tgt_obj_indices = np.array(tgt_obj_indices)
         
     ## 分离tgt obj点云和余下的点云
-    remaining_indices = list(set(range(raw_pointclouds.shape[0])) - set(tgt_obj_indices))
+    remaining_indices = list(set(range(raw_pointclouds.shape[0])) - set(tgt_obj_indices) - set(indices_within_bbox))
 
     ## 包含物体所有点云信息
     tmp_tgt_object_pcd = raw_pointclouds[tgt_obj_indices, :] 
     object_pcd_list.append(tmp_tgt_object_pcd)
-    remaining_pcd = raw_pointclouds[remaining_indices, :] 
     
-    tmp_inflate_pcd = remaining_pcd[indices_within_bbox, :] 
+    tmp_inflate_pcd = raw_pointclouds[indices_within_bbox, :] 
     inflate_pcd_list.append(tmp_inflate_pcd)
     
-    ## 在剩余点云中剔除膨胀点云
-    remaining_index = range(len(remaining_pcd))
-    remaining_index = [idx for idx in remaining_index if not idx in indices_within_bbox]
-    remaining_pcd = remaining_pcd[remaining_index, :]
+    remaining_pcd = raw_pointclouds[remaining_indices, :] 
     
     all_tgt_object_pcds = np.concatenate(object_pcd_list, axis=0)
     all_inflate_pcds = np.concatenate(inflate_pcd_list, axis=0)
@@ -274,15 +277,10 @@ def dense_pointclouds_from_bbox(raw_pointclouds, tgt_bbox, object_size, object_n
     
     ## 可视化
     # objects_pcd = open3d.geometry.PointCloud()
-    # inflate_pcd = open3d.geometry.PointCloud()
-    # remains_pcd = open3d.geometry.PointCloud()
     # objects_pcd.points = open3d.utility.Vector3dVector(adaptive_pcds[:,:3])
     # objects_pcd.colors = open3d.utility.Vector3dVector(adaptive_pcds[:,3:6])
-    # inflate_pcd.points = open3d.utility.Vector3dVector(all_inflate_pcds[:,:3])
-    # inflate_pcd.colors = open3d.utility.Vector3dVector(all_inflate_pcds[:,3:6])
-    # remains_pcd.points = open3d.utility.Vector3dVector(all_remaining_pcds[:,:3])
-    # # remains_pcd.colors = open3d.utility.Vector3dVector(all_remaining_pcds[:,3:6])
-    # remains_pcd.paint_uniform_color([0.5, 0.5, 0.5])
-    # open3d.visualization.draw_geometries([objects_pcd])
+    # center = bbox_9dof.get_center()
+    # bbox_9dof.scale(inflate_scale, center)
+    # open3d.visualization.draw_geometries([objects_pcd, bbox_9dof])
     
-    return adaptive_pcds, adaptive_prob, tmp_tgt_object_pcd
+    return adaptive_pcds, adaptive_prob
