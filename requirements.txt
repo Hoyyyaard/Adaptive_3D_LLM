@@ -1,0 +1,9 @@
+h5py
+scipy
+cython
+plyfile
+trimesh==2.35.39
+networkx==2.2
+transformers==4.37.0
+numpy==1.19.5
+open3d==0.16.0

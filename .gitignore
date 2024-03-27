@@ -1,0 +1,17 @@
+tmp
+data/3D_LLM
+data/Nr3D
+data/scannetpp_data_download
+data/ScanQA
+data/ScanRefer
+data/scannet/scannet_data
+data/scannet/scannet_data_dense
+results
+pretrained
+ckpts
+*.pyc
+*build
+*.egg-info
+bert-base-embedding
+*.egg
+*.so
