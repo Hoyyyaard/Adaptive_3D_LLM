@@ -120,6 +120,7 @@ def make_args_parser():
     parser.add_argument("--adaptive_pcd_num", default=10000)
     parser.add_argument("--adaptive_pcd_scale", default=1)
     parser.add_argument("--preprocess_pcd", default=False)
+    parser.add_argument("--cache_dir", required=True)
     
     args = parser.parse_args()
     args.use_height = not args.no_height
@@ -127,6 +128,7 @@ def make_args_parser():
     os.environ['adaptive_pcd_input'] = str(args.adaptive_pcd_input)
     print(f'adaptive_pcd_input: {args.adaptive_pcd_input}')
     print(f'caption_box_query: {args.caption_box_query}')
+    print(f'cache dir: ', args.cache_dir)
     
     return args
 

@@ -46,7 +46,7 @@ def _farthest_point_sampling(points, num_points):
     return selected_points
 
 ## USer: below are used for dense or inflate pointcloud
-def dense_pointclouds(raw_pointclouds, instance_pointclouds, target_obj_id_list, object_size, object_num):
+def dense_pointclouds(raw_pointclouds, instance_pointclouds, target_obj_id_list, object_size, object_num, num_points):
     '''
         raw_pointclouds: [N*10] xyz rgb other_fts
         instance_pointclouds: [N*1] 
@@ -95,8 +95,10 @@ def dense_pointclouds(raw_pointclouds, instance_pointclouds, target_obj_id_list,
     remaining_pcd = None
     ## tgt object 点云信息
     object_pcd_list = []
+    instance_object_pcd_list = []
     ## tgt object 膨胀点云信息（不包括tgt obj点云）
     inflate_pcd_list = []
+    instance_inflate_pcd_list = []
     for target_obj_id in target_obj_id_list:
         ## 得到特定物体类别的点云
         obj_idx = instance_pointclouds == (target_obj_id + 1)
@@ -110,6 +112,10 @@ def dense_pointclouds(raw_pointclouds, instance_pointclouds, target_obj_id_list,
         object_pcd_list.append(tmp_tgt_object_pcd)
         remaining_pcd = raw_pointclouds[remaining_indices, :] 
         
+        tmp_instance_pointclouds = instance_pointclouds[tgt_obj_indices, :]
+        inflate_pcd_list.append(tmp_instance_pointclouds) 
+        instance_remaining_pcd = instance_pointclouds[remaining_indices, :] 
+        
         ## 选择剩余点云中膨胀后边界框内点
         st = time.time()
         indices_within_bbox = _get_inflate_axis_aligned_bounding_box(tmp_tgt_object_pcd[:,:3], remaining_pcd[:,:3])
@@ -118,34 +124,64 @@ def dense_pointclouds(raw_pointclouds, instance_pointclouds, target_obj_id_list,
         tmp_inflate_pcd = remaining_pcd[indices_within_bbox, :] 
         inflate_pcd_list.append(tmp_inflate_pcd)
         
+        tmp_inflate_instacne_pcd = instance_remaining_pcd[indices_within_bbox, :] 
+        instance_inflate_pcd_list.append(tmp_inflate_instacne_pcd)
+        
+        
         ## 在剩余点云中剔除膨胀点云
         remaining_index = range(len(remaining_pcd))
         remaining_index = [idx for idx in remaining_index if not idx in indices_within_bbox]
         remaining_pcd = remaining_pcd[remaining_index, :]
+        instance_remaining_pcd = instance_remaining_pcd[remaining_index, :]
     
     all_tgt_object_pcds = np.concatenate(object_pcd_list, axis=0)
     all_inflate_pcds = np.concatenate(inflate_pcd_list, axis=0)
+    
+    all_instance_tgt_object_pcds = np.concatenate(instance_object_pcd_list, axis=0)
+    all_instance_inflate_pcds = np.concatenate(instance_inflate_pcd_list, axis=0)
     
     tgt_object_prob = np.ones_like(all_tgt_object_pcds[:,0]) * TGT_OBJ_PROB
     inflate_prob = np.ones_like(all_inflate_pcds[:,0]) * INFLATE_PROB
     
     all_remaining_pcds = np.array(remaining_pcd)
+    all_instance_remaining_pcds = np.array(instance_remaining_pcd)
     adaptive_pcds = np.concatenate([all_tgt_object_pcds, all_inflate_pcds], axis=0)
+    instance_activate_pcds = np.concatenate([all_instance_tgt_object_pcds, all_instance_inflate_pcds], axis=0)
+    
     # adaptive_pcds = all_tgt_object_pcds
     adaptive_prob = np.concatenate([tgt_object_prob, inflate_prob], axis=0)
     
     adaptive_pcds, choice = pc_util.random_sampling(adaptive_pcds, ADAPATIVE_POINT_NUM, return_choices=True)
     adaptive_prob = adaptive_prob[choice]
+    instance_activate_pcds = instance_activate_pcds[choice]
+    ## Only supervise the dense region detection
+    point_vote_tgt_obj_list = np.unique(instance_activate_pcds)
     
     point_num_offset = int(TOTAL_POINT_NUM - len(adaptive_pcds) )
     # all_remaining_pcds = _farthest_point_sampling(all_remaining_pcds, point_num_offset)
     all_remaining_pcds, choices = pc_util.random_sampling(all_remaining_pcds, point_num_offset, return_choices=True)
     remain_prob = np.ones_like(all_remaining_pcds[:,0]) * REMAIN_PROB
+    all_instance_remaining_pcds = all_instance_remaining_pcds[choices]
     
     adaptive_pcds = np.concatenate([adaptive_pcds, all_remaining_pcds], axis=0)
     adaptive_prob = np.concatenate([adaptive_prob, remain_prob], axis=0)
     # adaptive_pcds, _ = pc_util.random_sampling(np.concatenate([adaptive_pcds, all_remaining_pcds], axis=0), TOTAL_POINT_NUM, return_choices=True)
     # assert len(apdaptive_pcds) == TOTAL_POINT_NUM
+    instance_adaptive_pcds = np.concatenate([instance_activate_pcds, all_instance_remaining_pcds], axis=0)
+    
+    point_votes = np.zeros([num_points, 3])
+    point_votes_mask = np.zeros(num_points)
+    for i_instance in point_vote_tgt_obj_list:            
+        # find all points belong to that instance
+        ind = np.where(instance_adaptive_pcds == i_instance)[0]
+        x = adaptive_pcds[ind,:3]        ## [num_pcs, 3]
+        center = 0.5*(x.min(0) + x.max(0))
+        point_votes[ind, :] = center - x
+        point_votes_mask[ind] = 1.0
+    point_votes = np.tile(point_votes, (1, 3)) # make 3 votes identical 
+    
+    vote_label = point_votes.astype(np.float32)
+    vote_label_mask = point_votes_mask.astype(np.int64)    
     
     ## 可视化
     # objects_pcd = open3d.geometry.PointCloud()
@@ -160,7 +196,7 @@ def dense_pointclouds(raw_pointclouds, instance_pointclouds, target_obj_id_list,
     # remains_pcd.paint_uniform_color([0.5, 0.5, 0.5])
     # open3d.visualization.draw_geometries([objects_pcd])
     
-    return adaptive_pcds, adaptive_prob
+    return adaptive_pcds, adaptive_prob, vote_label, vote_label_mask
 
 
 ## USer: below are used for dense or inflate pointcloud
