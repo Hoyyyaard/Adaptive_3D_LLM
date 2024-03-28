@@ -239,7 +239,7 @@ class Dataset(ScanNetBaseDataset):
         
         ## USer: below is used for only input answer related pcs to model
         if self.args.adaptive_pcd_input:
-            cache_dir = f'{self.args.cache_dir}/{task_name}'
+            cache_dir = f'{self.args.cache_dir}/scanqa'
             if not os.path.exists(cache_dir):
                 os.makedirs(cache_dir)
             exist_npy = os.listdir(cache_dir)
@@ -255,16 +255,16 @@ class Dataset(ScanNetBaseDataset):
             object_num = len(self.annotations[idx]['object_ids'])
             obj_idx = instance_labels == (target_obj_id + 1)
             objects_pcd = open3d.geometry.PointCloud()
-            objects_pcd.points = open3d.utility.Vector3dVector(raw_pointclouds[:,:3][obj_idx ])
+            objects_pcd.points = open3d.utility.Vector3dVector(raw_pointclouds[:,:3][obj_idx])
             bbox = objects_pcd.get_axis_aligned_bounding_box()
             bbox_size = [bbox.max_bound[i] - bbox.min_bound[i] for i in range(len(bbox.max_bound))]
             object_size = bbox_size[0] * bbox_size[1] * bbox_size[2]
             
             from src.utils import dense_pointclouds
             if uni_key in exist_npy:
-                ret_dict['point_clouds'], ret_dict['sample_prob'], ret_dict['vote_label'], ret_dict['vote_label_mask'] = np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['point_clouds'], np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['sample_prob']
+                ret_dict['point_clouds'], ret_dict['sample_prob'], ret_dict['vote_label'], ret_dict['vote_label_mask'] = np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['point_clouds'], np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['sample_prob'], np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['vote_label'], np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['vote_label_mask']
             else:
-                ret_dict['point_clouds'], ret_dict['sample_prob'], ret_dict['vote_label'], ret_dict['vote_label_mask'] = dense_pointclouds(dense_ret_dict["point_clouds"], dense_ret_dict["instance_labels"], self.annotations[idx]['object_ids'],object_size, object_num, self.num_points)
+                ret_dict['point_clouds'], ret_dict['sample_prob'], ret_dict['vote_label'], ret_dict['vote_label_mask'] = dense_pointclouds(dense_ret_dict["point_clouds"], dense_ret_dict["instance_labels"], self.annotations[idx]['object_ids'],object_size, object_num)
                 np.save(cache_path, {'point_clouds':ret_dict['point_clouds'], 'sample_prob':ret_dict['sample_prob'], 'vote_label':ret_dict['vote_label'], 'vote_label_mask':ret_dict['vote_label_mask']})
             
             ret_dict["gt_box_corners"] = dense_ret_dict["gt_box_corners"]

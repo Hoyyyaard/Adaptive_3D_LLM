@@ -375,6 +375,9 @@ class captioner(nn.Module):
         instruction_id = instruction_id[None, :].repeat(batch_size, 1)
         instruction_embedding = embedding_layer(instruction_id) # batch x ntoken x n_embd
         
+        ## USer
+        # viusualization_preict_bbox(inputs['point_clouds'][0], detector_output['box_corners'][0], inputs['gt_box_corners'][0])
+        
         prefix_tokens = []
         for proposal_id in range(nproposals):
             box_query=detector_output['box_corners'][:, [proposal_id]]  # batch x 1 x 8 x 3
@@ -562,3 +565,38 @@ class captioner(nn.Module):
         detector_output['output_ids'] = output_ids
         
         return detector_output
+    
+    
+def viusualization_preict_bbox(pcd, pred_box_corners, gt_box_corners):
+    from utils.box_util import flip_axis_to_camera_np
+    import open3d
+    pcd = pcd.cpu().numpy()
+    pred_box_corners = pred_box_corners.cpu().numpy()
+    gt_box_corners = gt_box_corners.cpu().numpy()
+    pcd[:, 0:3] = flip_axis_to_camera_np(pcd[:, 0:3])
+    # 定义边界框的边，即点之间的连接
+    lines = [
+        [0, 1], [1, 2], [2, 3], [3, 0],
+        [4, 5], [5, 6], [6, 7], [7, 4],
+        [0, 4], [1, 5], [2, 6], [3, 7]
+    ]
+
+    # 根据点和线创建线段集合
+    colors = [[1, 0, 0] for i in range(len(lines))]  # 定义所有线条的颜色，这里设置为红色
+    
+    pred_bbox_line_set_list = []
+    for p_bbox_corner in gt_box_corners:
+        line_set = open3d.geometry.LineSet(
+            points=open3d.utility.Vector3dVector(p_bbox_corner),
+            lines=open3d.utility.Vector2iVector(lines),
+        )
+        line_set.colors = open3d.utility.Vector3dVector(colors)
+        pred_bbox_line_set_list.append(line_set)
+    
+    objects_pcd = open3d.geometry.PointCloud()
+    objects_pcd.points= open3d.utility.Vector3dVector(pcd[:,:3])
+    objects_pcd.colors= open3d.utility.Vector3dVector(pcd[:,3:6])
+    # open3d.visualization.draw_geometries([objects_pcd, line_set])
+    vis_list = [objects_pcd]
+    vis_list.extend(pred_bbox_line_set_list)
+    open3d.visualization.draw_geometries(vis_list)

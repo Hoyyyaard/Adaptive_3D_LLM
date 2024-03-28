@@ -5,7 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "eval",
+            "name": "vis_det_in_dense_caption",
             "type": "python",
             "request": "launch",
             "program": "main.py",
@@ -19,23 +19,24 @@
                 "--captioner", "ll3da",
                 
                 "--checkpoint_dir", "./ckpts/opt-1.3b/ll3da-scannet",
-                "--test_ckpt", "./ckpts/opt-1.3b/ll3da-scannet/checkpoint_best.pth",
-                "--dataset", "unified_scanqa",
+                "--test_ckpt", "ckpts/opt-1.3b/gpu003/ll3da-scannet-adaptive-traindet-wdetloss-new/checkpoint.pth",
+                "--dataset", "unified_densecap_scanrefer",
                 "--vocab", "facebook/opt-1.3b",
                 "--qformer_vocab", "bert-base-embedding",
                 "--dist_url", "tcp://localhost:12345",
                 "--criterion", "CiDEr",
                 "--freeze_detector",
                 "--freeze_llm",
-                "--batchsize_per_gpu", "24",
+                "--batchsize_per_gpu", "1",
                 "--ngpus", "1",
                 "--max_des_len", "256",
                 "--max_prompt", "1",
                 "--use_beam_search",
                 "--test_only",
                 "--log_dir", "results/debug",
-                "--special_dataset","results/size_filter_scannet_qa_datasets/val_size_s_1e-2_num180.json",
-                "--adaptive_pcd_input"
+                "--cache_dir","results/debug",
+                "--vis_detection",
+                "--adaptive_pcd_input",
             ],
             "env": {
                 "PYTHONWARNINGS":"ignore:semaphore_tracker:UserWarning",
@@ -43,7 +44,7 @@
                 "MKL_NUM_THREADS":"1",
                 "NUMEXPR_NUM_THREADS":"1",
                 "OMP_NUM_THREADS":"1",
-                "DISPLAY":"localhost:10.0"
+                "DISPLAY":"localhost:15.0"
             }
         },
         {
@@ -53,7 +54,7 @@
             "program": "main.py",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "python": "/home/dell/miniconda3/envs/ll3da/bin/python",
+            "python": "/home/admin/micromamba/envs/ll3da/bin/python",
             "args": [
                 "--use_color",
                 "--use_normal",
@@ -76,6 +77,7 @@
                 "--test_only",
                 "--log_dir", "results/debug",
                 "--adaptive_pcd_input",
+                "--cache_dir","results/debug"
                 // "--special_dataset","results/size_filter_scannet_qa_datasets/val_size_s_1e-2_num180.json"
 
             ],
@@ -95,7 +97,7 @@
             "program": "main.py",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "python": "/home/dell/miniconda3/envs/ll3da/bin/python",
+            "python": "/home/admin/micromamba/envs/ll3da/bin/python",
             "args": [
                 "--use_color",
                 "--use_normal",
@@ -138,7 +140,7 @@
             "program": "main.py",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "python": "/home/dell/miniconda3/envs/ll3da/bin/python",
+            "python": "/home/admin/micromamba/envs/ll3da/bin/python",
             "args": [
                 "--use_color",
                 "--use_normal",
@@ -156,7 +158,9 @@
                 "--max_des_len", "256",
                 "--max_prompt", "1",
                 "--use_beam_search",
-                "--criterion", "CiDEr@0.5"
+                "--criterion", "CiDEr@0.5",
+                "--adaptive_pcd_input",
+                "--cache_dir", "results/debug",
 
             ],
             "env": {

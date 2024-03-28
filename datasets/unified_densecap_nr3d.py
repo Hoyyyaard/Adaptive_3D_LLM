@@ -169,7 +169,7 @@ class Dataset(ScanNetBaseDataset):
             
 
             if self.args.adaptive_pcd_input:
-                cache_dir = f'{self.args.cache_dir}/{task_name}'
+                cache_dir = f'{self.args.cache_dir}/nr3d'
                 if not os.path.exists(cache_dir):
                     os.makedirs(cache_dir)
                 exist_npy = os.listdir(cache_dir)
@@ -191,9 +191,9 @@ class Dataset(ScanNetBaseDataset):
                 
                 from src.utils import dense_pointclouds
                 if uni_key in exist_npy:
-                    ret_dict['point_clouds'], ret_dict['sample_prob'], ret_dict['vote_label'], ret_dict['vote_label_mask'] = np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['point_clouds'], np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['sample_prob']
+                    ret_dict['point_clouds'], ret_dict['sample_prob'], ret_dict['vote_label'], ret_dict['vote_label_mask'] = np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['point_clouds'], np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['sample_prob'],np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['vote_label'], np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['vote_label_mask']
                 else:
-                    ret_dict['point_clouds'], ret_dict['sample_prob'], ret_dict['vote_label'], ret_dict['vote_label_mask'] = dense_pointclouds(dense_ret_dict["point_clouds"], dense_ret_dict["instance_labels"], [int(self.annotations[idx]['object_id'])],object_size, object_num, self.num_points)
+                    ret_dict['point_clouds'], ret_dict['sample_prob'], ret_dict['vote_label'], ret_dict['vote_label_mask'] = dense_pointclouds(dense_ret_dict["point_clouds"], dense_ret_dict["instance_labels"], [int(self.annotations[idx]['object_id'])],object_size, object_num)
                     np.save(cache_path, {'point_clouds':ret_dict['point_clouds'], 'sample_prob':ret_dict['sample_prob'], 'vote_label':ret_dict['vote_label'], 'vote_label_mask':ret_dict['vote_label_mask']})
 
                 ret_dict["gt_box_corners"] = dense_ret_dict["gt_box_corners"]

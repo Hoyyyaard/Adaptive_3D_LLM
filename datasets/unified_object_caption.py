@@ -203,7 +203,7 @@ class Dataset(ScanNetBaseDataset):
             if uni_key in exist_npy:
                 ret_dict['point_clouds'], ret_dict['sample_prob'] = np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['point_clouds'], np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['sample_prob']
             else:
-                ret_dict['point_clouds'], ret_dict['sample_prob'] = dense_pointclouds(dense_ret_dict["point_clouds"], dense_ret_dict["instance_labels"], [int(self.annotations[idx]['object_id'])],object_size, object_num)
+                ret_dict['point_clouds'], ret_dict['sample_prob'],_,_ = dense_pointclouds(dense_ret_dict["point_clouds"], dense_ret_dict["instance_labels"], [int(self.annotations[idx]['object_id'])],object_size, object_num)
                 np.save(cache_path, {'point_clouds':ret_dict['point_clouds'], 'sample_prob':ret_dict['sample_prob']})
             
             ret_dict["gt_box_centers_normalized"] = dense_ret_dict["gt_box_centers_normalized"]

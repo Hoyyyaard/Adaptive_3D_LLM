@@ -119,8 +119,9 @@ def make_args_parser():
     parser.add_argument("--caption_box_query", default=False, action='store_true')
     parser.add_argument("--adaptive_pcd_num", default=10000)
     parser.add_argument("--adaptive_pcd_scale", default=1)
-    parser.add_argument("--preprocess_pcd", default=False)
+    parser.add_argument("--preprocess_pcd", action='store_true')
     parser.add_argument("--cache_dir", required=True)
+    parser.add_argument("--vis_detection", action='store_true')
     
     args = parser.parse_args()
     args.use_height = not args.no_height
@@ -299,7 +300,7 @@ def main(local_rank, args):
         if is_distributed():
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
             model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=[local_rank], find_unused_parameters=True
+                model, device_ids=[local_rank],
             )
             
         if args.optimizer == 'AdamW':
