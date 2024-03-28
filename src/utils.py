@@ -5,6 +5,7 @@ from tqdm import tqdm
 import utils.pc_util as pc_util
 import open3d
 import time
+import os
 from copy import deepcopy
 
 def _farthest_point_sampling(points, num_points):
@@ -52,7 +53,8 @@ def dense_pointclouds(raw_pointclouds, instance_pointclouds, target_obj_id_list,
         instance_pointclouds: [N*1] 
     '''
     TOTAL_POINT_NUM = 40000
-    ADAPATIVE_POINT_NUM = 10000
+    apn = int(os.getenv("adaptive_pcd_num", 10000))
+    ADAPATIVE_POINT_NUM = apn
     TGT_OBJ_PROB = 0.5
     INFLATE_PROB = 0.3
     REMAIN_PROB = 0.2

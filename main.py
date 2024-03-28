@@ -127,9 +127,11 @@ def make_args_parser():
     args.use_height = not args.no_height
     
     os.environ['adaptive_pcd_input'] = str(args.adaptive_pcd_input)
+    os.environ['adaptive_pcd_num'] = str(args.adaptive_pcd_num)
     print(f'adaptive_pcd_input: {args.adaptive_pcd_input}')
     print(f'caption_box_query: {args.caption_box_query}')
-    print(f'cache dir: ', args.cache_dir)
+    print(f'cache dir: {args.cache_dir}')
+    print(f'adaptive_pcd_num: {args.adaptive_pcd_num}')
     
     return args
 

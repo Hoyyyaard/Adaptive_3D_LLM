@@ -19,7 +19,7 @@
                 "--captioner", "ll3da",
                 
                 "--checkpoint_dir", "./ckpts/opt-1.3b/ll3da-scannet",
-                "--test_ckpt", "ckpts/opt-1.3b/gpu003/ll3da-scannet-adaptive-traindet-wdetloss-new/checkpoint.pth",
+                "--test_ckpt", "ckpts/opt-1.3b/gpu003/ll3da-scannet-adaptive-traindet-wdetloss-new/checkpoint_10k.pth",
                 "--dataset", "unified_densecap_scanrefer",
                 "--vocab", "facebook/opt-1.3b",
                 "--qformer_vocab", "bert-base-embedding",
