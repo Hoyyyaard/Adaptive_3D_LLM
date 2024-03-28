@@ -122,6 +122,7 @@ def make_args_parser():
     parser.add_argument("--preprocess_pcd", action='store_true')
     parser.add_argument("--cache_dir", required=True)
     parser.add_argument("--vis_detection", action='store_true')
+    parser.add_argument("--train_encoder", action='store_true')
     
     args = parser.parse_args()
     args.use_height = not args.no_height
@@ -132,6 +133,7 @@ def make_args_parser():
     print(f'caption_box_query: {args.caption_box_query}')
     print(f'cache dir: {args.cache_dir}')
     print(f'adaptive_pcd_num: {args.adaptive_pcd_num}')
+    print(f'train_encoder: {args.train_encoder}')
     
     return args
 
@@ -295,53 +297,43 @@ def main(local_rank, args):
             print('====                                          ====')
             for name, param in checkpoint['model'].items():
                 print('\t', name, param.shape)
+        
+        if not args.preprocess_pcd:
+            model_no_ddp = model.cuda()
+            model = model.cuda(local_rank)
             
-        model_no_ddp = model.cuda()
-        model = model.cuda(local_rank)
-        
-        if is_distributed():
-            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-            model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=[local_rank],
-            )
+            if is_distributed():
+                model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+                model = torch.nn.parallel.DistributedDataParallel(
+                    model, device_ids=[local_rank],
+                )
+                
+            if args.optimizer == 'AdamW':
+                optimizer = torch.optim.AdamW(
+                    filter(lambda params: params.requires_grad, model_no_ddp.parameters()), 
+                    lr=args.base_lr, 
+                    weight_decay=args.weight_decay
+                )
+            elif args.optimizer == 'SGD':
+                optimizer = torch.optim.SGD(
+                    filter(lambda params: params.requires_grad, model_no_ddp.parameters()), 
+                    lr=args.base_lr, 
+                    weight_decay=args.weight_decay
+                )
+            else:
+                raise NotImplementedError
             
-        if args.optimizer == 'AdamW':
-            optimizer = torch.optim.AdamW(
-                filter(lambda params: params.requires_grad, model_no_ddp.parameters()), 
-                lr=args.base_lr, 
-                weight_decay=args.weight_decay
+            print('====                                          ====')
+            print('====  Only training the following parameters  ====')
+            print('====                                          ====')
+            for name, param in model_no_ddp.named_parameters():
+                if param.requires_grad is True:
+                    print('\t', name, param.shape)
+            
+            loaded_epoch, best_val_metrics = resume_if_possible(
+                args.checkpoint_dir, model_no_ddp, optimizer
             )
-        elif args.optimizer == 'SGD':
-            optimizer = torch.optim.SGD(
-                filter(lambda params: params.requires_grad, model_no_ddp.parameters()), 
-                lr=args.base_lr, 
-                weight_decay=args.weight_decay
-            )
-        else:
-            raise NotImplementedError
-        
-        print('====                                          ====')
-        print('====  Only training the following parameters  ====')
-        print('====                                          ====')
-        for name, param in model_no_ddp.named_parameters():
-            if param.requires_grad is True:
-                print('\t', name, param.shape)
-        
-        loaded_epoch, best_val_metrics = resume_if_possible(
-            args.checkpoint_dir, model_no_ddp, optimizer
-        )
-        args.start_epoch = loaded_epoch + 1
-        if args.preprocess_pcd:
-            do_preprocess(
-                args,
-                model,
-                model_no_ddp,
-                optimizer,
-                dataset_config,
-                dataloaders,
-                best_val_metrics,
-            )
-        else:
+            args.start_epoch = loaded_epoch + 1
             do_train(
                 args,
                 model,
@@ -351,6 +343,17 @@ def main(local_rank, args):
                 dataloaders,
                 best_val_metrics,
             )
+        else:
+            do_preprocess(
+                args,
+                None,
+                None,
+                None,
+                None,
+                dataloaders,
+                None,
+            )
+            
             
 
 def launch_distributed(args):

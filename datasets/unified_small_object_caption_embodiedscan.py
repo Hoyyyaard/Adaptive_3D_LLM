@@ -62,7 +62,7 @@ class Dataset(ScanNetBaseDataset):
         ## load annotations
         assert split_set in ["train", "val"]
         
-        self.scanrefer = json.load(open('/home/dell/Projects/LL3DA/results/train_small_than_1e-3_wdes.json', 'r'))
+        self.scanrefer = json.load(open('results/train_small_than_1e-3_wdes.json', 'r'))
             
         
         self.annotations = self.scanrefer
@@ -171,16 +171,16 @@ class Dataset(ScanNetBaseDataset):
         ## USer: below is used for only input answer related pcs to model
         if self.args.adaptive_pcd_input:
             try:
-                cache_dir = 'results/process_datasets/adaptive_pcds_adapt_scale_1w/small_object_caption'
-                if not os.path.exists(cache_dir):
-                    os.makedirs(cache_dir)
-                exist_npy = os.listdir(cache_dir)
-                exist_npy = [npy.split(".")[0] for npy in exist_npy]
-                uni_key = f"{scan_name}_{object_id}_{object_name}"
-                cache_path = f'{cache_dir}/{uni_key}'
+                # cache_dir = 'results/process_datasets/adaptive_pcds_adapt_scale_1w/small_object_caption'
+                # if not os.path.exists(cache_dir):
+                #     os.makedirs(cache_dir)
+                # exist_npy = os.listdir(cache_dir)
+                # exist_npy = [npy.split(".")[0] for npy in exist_npy]
+                # uni_key = f"{scan_name}_{object_id}_{object_name}"
+                # cache_path = f'{cache_dir}/{uni_key}'
 
                 # dense_ret_dict = self._get_scan_data_adaptive(scan_name)
-                source_dir = '/home/dell/Projects/LL3DA/data/scannet/scannet_data'
+                source_dir = 'data/scannet/scannet_data'
                 mesh_vertices = np.load(os.path.join(f'{source_dir}_dense', scan_name) + "_aligned_vert.npy")
 
                 point_cloud = mesh_vertices[:, 0:6]
@@ -195,11 +195,11 @@ class Dataset(ScanNetBaseDataset):
                 
                 
                 from src.utils import dense_pointclouds_from_bbox
-                if uni_key in exist_npy:
-                    ret_dict['point_clouds'], ret_dict['sample_prob'] = np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['point_clouds'], np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['sample_prob']
-                else:
-                    ret_dict['point_clouds'], ret_dict['sample_prob'] = dense_pointclouds_from_bbox(point_cloud, tgt_box , tgt_box[3]*tgt_box[4]*tgt_box[5])
-                    np.save(cache_path, {'point_clouds':ret_dict['point_clouds'], 'sample_prob':ret_dict['sample_prob']})
+                # if uni_key in exist_npy:
+                #     ret_dict['point_clouds'], ret_dict['sample_prob'] = np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['point_clouds'], np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['sample_prob']
+                # else:
+                ret_dict['point_clouds'], ret_dict['sample_prob'] = dense_pointclouds_from_bbox(point_cloud, tgt_box , tgt_box[3]*tgt_box[4]*tgt_box[5])
+                # np.save(cache_path, {'point_clouds':ret_dict['point_clouds'], 'sample_prob':ret_dict['sample_prob']})
                 
                 ret_dict["point_cloud_dims_min"] = ret_dict["point_clouds"][..., :3].min(axis=0)
                 ret_dict["point_cloud_dims_max"] = ret_dict["point_clouds"][..., :3].max(axis=0)

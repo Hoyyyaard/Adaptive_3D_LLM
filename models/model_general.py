@@ -40,7 +40,7 @@ class CaptionNet(nn.Module):
         
         self.train()
         
-    def forward(self, batch_data_label: dict, is_eval: bool=False, task_name: str=None) -> dict:
+    def forward(self, batch_data_label: dict, is_eval: bool=False, task_name: str=None, train_encoder: bool=False) -> dict:
         
         outputs = {'loss': torch.zeros(1)[0].cuda()}
         
@@ -49,7 +49,10 @@ class CaptionNet(nn.Module):
                 outputs = self.detector(batch_data_label, is_eval=True)
             else:
                 outputs = self.detector(batch_data_label, is_eval=is_eval)
-                
+        
+        if train_encoder is True:
+            return outputs
+        
         if self.freeze_detector is True:
             outputs['loss'] = torch.zeros(1)[0].cuda()
         # elif self.freeze_detector is False and os.getenv('adaptive_pcd_input') == 'True':
