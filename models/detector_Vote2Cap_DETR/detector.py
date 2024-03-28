@@ -345,7 +345,7 @@ class Model_Vote2Cap_DETR(nn.Module):
             query_xyz, point_cloud_dims, box_features
         )
         
-        if self.criterion is not None and is_eval is False and not (os.getenv('adaptive_pcd_input') == 'True'):
+        if self.criterion is not None and is_eval is False :
             (
                 box_predictions['outputs']['assignments'], 
                 box_predictions['outputs']['loss'], 

@@ -52,8 +52,8 @@ class CaptionNet(nn.Module):
                 
         if self.freeze_detector is True:
             outputs['loss'] = torch.zeros(1)[0].cuda()
-        elif self.freeze_detector is False and os.getenv('adaptive_pcd_input') == 'True':
-            outputs['loss'] = torch.zeros(1)[0].cuda()
+        # elif self.freeze_detector is False and os.getenv('adaptive_pcd_input') == 'True':
+        #     outputs['loss'] = torch.zeros(1)[0].cuda()
         
         if self.captioner is not None:
             outputs = self.captioner(
