@@ -47,7 +47,7 @@ def _farthest_point_sampling(points, num_points):
     return selected_points
 
 ## USer: below are used for dense or inflate pointcloud
-def dense_pointclouds(raw_pointclouds, instance_pointclouds, target_obj_id_list, object_size, object_num):
+def dense_pointclouds(raw_pointclouds, instance_pointclouds, target_obj_id_list, object_size, object_num, dataset_config, scan_name, center_normalizing_range):
     '''
         raw_pointclouds: [N*10] xyz rgb other_fts
         instance_pointclouds: [N*1] 
@@ -55,7 +55,7 @@ def dense_pointclouds(raw_pointclouds, instance_pointclouds, target_obj_id_list,
     TOTAL_POINT_NUM = 40000
     apn = int(os.getenv("adaptive_pcd_num", 10000))
     ADAPATIVE_POINT_NUM = apn
-    TGT_OBJ_PROB = 0.5
+    TGT_OBJ_PROB = 0.7
     INFLATE_PROB = 0.3
     REMAIN_PROB = 0.2
     
@@ -171,6 +171,24 @@ def dense_pointclouds(raw_pointclouds, instance_pointclouds, target_obj_id_list,
     # assert len(apdaptive_pcds) == TOTAL_POINT_NUM
     instance_adaptive_pcds = np.concatenate([instance_activate_pcds, all_instance_remaining_pcds], axis=0)
     
+    ## Visualization
+    # objects_pcd = open3d.geometry.PointCloud()
+    # inflate_pcd = open3d.geometry.PointCloud()
+    # remains_pcd = open3d.geometry.PointCloud()
+    # objects_pcd.points = open3d.utility.Vector3dVector(adaptive_pcds[:,:3])
+    # objects_pcd.colors = open3d.utility.Vector3dVector(adaptive_pcds[:,3:6])
+    # inflate_pcd.points = open3d.utility.Vector3dVector(all_inflate_pcds[:,:3])
+    # inflate_pcd.colors = open3d.utility.Vector3dVector(all_inflate_pcds[:,3:6])
+    # remains_pcd.points = open3d.utility.Vector3dVector(all_remaining_pcds[:,:3])
+    # # remains_pcd.colors = open3d.utility.Vector3dVector(all_remaining_pcds[:,3:6])
+    # remains_pcd.paint_uniform_color([0.5, 0.5, 0.5])
+    # open3d.visualization.draw_geometries([objects_pcd])
+    
+    
+    ## Generate encoder label below w/o augement
+    from utils.pc_util import scale_points, shift_scale_points
+    ret_dict = {}
+    
     point_votes = np.zeros([40000, 3])
     point_votes_mask = np.zeros(40000)
     for i_instance in point_vote_tgt_obj_list:            
@@ -184,21 +202,80 @@ def dense_pointclouds(raw_pointclouds, instance_pointclouds, target_obj_id_list,
     
     vote_label = point_votes.astype(np.float32)
     vote_label_mask = point_votes_mask.astype(np.int64)    
+    ret_dict['vote_label'] = vote_label
+    ret_dict['vote_label_mask'] = vote_label_mask
     
-    ## 可视化
-    # objects_pcd = open3d.geometry.PointCloud()
-    # inflate_pcd = open3d.geometry.PointCloud()
-    # remains_pcd = open3d.geometry.PointCloud()
-    # objects_pcd.points = open3d.utility.Vector3dVector(adaptive_pcds[:,:3])
-    # objects_pcd.colors = open3d.utility.Vector3dVector(adaptive_pcds[:,3:6])
-    # inflate_pcd.points = open3d.utility.Vector3dVector(all_inflate_pcds[:,:3])
-    # inflate_pcd.colors = open3d.utility.Vector3dVector(all_inflate_pcds[:,3:6])
-    # remains_pcd.points = open3d.utility.Vector3dVector(all_remaining_pcds[:,:3])
-    # # remains_pcd.colors = open3d.utility.Vector3dVector(all_remaining_pcds[:,3:6])
-    # remains_pcd.paint_uniform_color([0.5, 0.5, 0.5])
-    # open3d.visualization.draw_geometries([objects_pcd])
+    MAX_NUM_OBJ = 128
+    target_bboxes = np.zeros((MAX_NUM_OBJ, 6), dtype=np.float32)
+    target_bboxes_mask = np.zeros((MAX_NUM_OBJ), dtype=np.float32)
+    angle_classes = np.zeros((MAX_NUM_OBJ,), dtype=np.int64)
+    angle_residuals = np.zeros((MAX_NUM_OBJ,), dtype=np.float32)
+    raw_sizes = np.zeros((MAX_NUM_OBJ, 3), dtype=np.float32)
+    raw_angles = np.zeros((MAX_NUM_OBJ,), dtype=np.float32)
+    object_ids = np.zeros((MAX_NUM_OBJ,), dtype=np.int64)
     
-    return adaptive_pcds, adaptive_prob, vote_label, vote_label_mask
+    instance_bboxes = np.load('data/scannet/scannet_data_dense/' + scan_name + "_aligned_bbox.npy")
+    instance_bboxes = np.array([bbox for bbox in instance_bboxes if (bbox[-1]+1) in point_vote_tgt_obj_list])
+    target_bboxes_mask[0 : instance_bboxes.shape[0]] = 1
+    target_bboxes[0 : instance_bboxes.shape[0], :] = instance_bboxes[:, 0:6]
+
+    raw_sizes = target_bboxes[:, 3:6] ## [w,h,l] of tgt objects
+    point_cloud_dims_min = adaptive_pcds[..., :3].min(axis=0)
+    point_cloud_dims_max = adaptive_pcds[..., :3].max(axis=0)
+
+    box_centers = target_bboxes.astype(np.float32)[:, 0:3]
+    box_centers_normalized = shift_scale_points(
+        box_centers[None, ...],
+        src_range=[
+            point_cloud_dims_min[None, ...],
+            point_cloud_dims_max[None, ...],
+        ],
+        dst_range=center_normalizing_range,
+    )
+    box_centers_normalized = box_centers_normalized.squeeze(0)
+    box_centers_normalized = box_centers_normalized * target_bboxes_mask[..., None]
+    mult_factor = point_cloud_dims_max - point_cloud_dims_min
+    box_sizes_normalized = scale_points(
+        raw_sizes.astype(np.float32)[None, ...],
+        mult_factor=1.0 / mult_factor[None, ...],
+    )
+    box_sizes_normalized = box_sizes_normalized.squeeze(0)
+
+    box_corners = dataset_config.box_parametrization_to_corners_np(
+        box_centers[None, ...],
+        raw_sizes.astype(np.float32)[None, ...],
+        raw_angles.astype(np.float32)[None, ...],
+    )
+    box_corners = box_corners.squeeze(0)
+    object_ids[:instance_bboxes.shape[0]] = instance_bboxes[:, -1]
+    
+    ret_dict["point_clouds"] = adaptive_pcds.astype(np.float32)
+    ret_dict["gt_box_corners"] = box_corners.astype(np.float32)
+    ret_dict["gt_box_centers"] = box_centers.astype(np.float32)
+    ret_dict["gt_box_centers_normalized"] = box_centers_normalized.astype(
+        np.float32
+    )
+    ret_dict["gt_angle_class_label"] = angle_classes.astype(np.int64)
+    ret_dict["gt_angle_residual_label"] = angle_residuals.astype(np.float32)
+    target_bboxes_semcls = np.zeros((MAX_NUM_OBJ))
+    target_bboxes_semcls[0 : instance_bboxes.shape[0]] = [
+        dataset_config.nyu40id2class.get(x, -1)
+        for x in instance_bboxes[:, -2][0 : instance_bboxes.shape[0]]
+    ]
+    ret_dict["gt_box_sem_cls_label"] = target_bboxes_semcls.astype(np.int64)
+    ret_dict["gt_box_present"] = target_bboxes_mask.astype(np.float32)
+    ret_dict["pcl_color"] = adaptive_pcds[:,3:6]
+    ret_dict["gt_box_sizes"] = raw_sizes.astype(np.float32)
+    ret_dict["gt_box_sizes_normalized"] = box_sizes_normalized.astype(np.float32)
+    ret_dict["gt_box_angles"] = raw_angles.astype(np.float32)
+    ret_dict["point_cloud_dims_min"] = point_cloud_dims_min.astype(np.float32)
+    ret_dict["point_cloud_dims_max"] = point_cloud_dims_max.astype(np.float32)
+    ret_dict["gt_object_ids"] = object_ids.astype(np.int64)
+    
+    ret_dict['point_clouds'] = adaptive_pcds
+    ret_dict['sample_prob'] = adaptive_prob
+    
+    return ret_dict
 
 
 ## USer: below are used for dense or inflate pointcloud
@@ -207,8 +284,9 @@ def dense_pointclouds_from_bbox(raw_pointclouds, tgt_bbox, object_size, object_n
         raw_pointclouds: [N*10] xyz rgb other_fts
     '''
     TOTAL_POINT_NUM = 40000
-    ADAPATIVE_POINT_NUM = 10000
-    TGT_OBJ_PROB = 0.5
+    apn = int(os.getenv("adaptive_pcd_num", 10000))
+    ADAPATIVE_POINT_NUM = apn
+    TGT_OBJ_PROB = 0.7
     INFLATE_PROB = 0.3
     REMAIN_PROB = 0.2
     

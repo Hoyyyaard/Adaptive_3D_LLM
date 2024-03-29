@@ -191,24 +191,11 @@ class Dataset(ScanNetBaseDataset):
                 
                 from src.utils import dense_pointclouds
                 if uni_key in exist_npy:
-                    ret_dict['point_clouds'], ret_dict['sample_prob'], ret_dict['vote_label'], ret_dict['vote_label_mask'] = np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['point_clouds'], np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['sample_prob'],np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['vote_label'], np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['vote_label_mask']
+                    ret_dict = np.load(f'{cache_path}.npy',allow_pickle=True).tolist()
                 else:
-                    ret_dict['point_clouds'], ret_dict['sample_prob'], ret_dict['vote_label'], ret_dict['vote_label_mask'] = dense_pointclouds(dense_ret_dict["point_clouds"], dense_ret_dict["instance_labels"], [int(self.annotations[idx]['object_id'])],object_size, object_num)
-                    np.save(cache_path, {'point_clouds':ret_dict['point_clouds'], 'sample_prob':ret_dict['sample_prob'], 'vote_label':ret_dict['vote_label'], 'vote_label_mask':ret_dict['vote_label_mask']})
+                    ret_dict = dense_pointclouds(dense_ret_dict["point_clouds"], dense_ret_dict["instance_labels"], [target_obj_id], object_size, object_num, self.dataset_config, scan_name, self.center_normalizing_range)
+                    np.save(cache_path, ret_dict)
 
-                ret_dict["gt_box_corners"] = dense_ret_dict["gt_box_corners"]
-                ret_dict["gt_box_centers"] = dense_ret_dict["gt_box_centers"]
-                ret_dict["gt_box_centers_normalized"] = dense_ret_dict["gt_box_centers_normalized"]
-                ret_dict["gt_angle_class_label"] = dense_ret_dict["gt_angle_class_label"]
-                ret_dict["gt_angle_residual_label"] = dense_ret_dict["gt_angle_residual_label"]
-                ret_dict["gt_box_sem_cls_label"] =  dense_ret_dict["gt_box_sem_cls_label"]
-                ret_dict["gt_box_present"] = dense_ret_dict["gt_box_present"]
-                ret_dict["gt_box_sizes"] = dense_ret_dict["gt_box_sizes"]
-                ret_dict["gt_box_sizes_normalized"] = dense_ret_dict["gt_box_sizes_normalized"]
-                ret_dict["gt_box_angles"] = dense_ret_dict["gt_box_angles"]
-                ret_dict["point_cloud_dims_min"] = dense_ret_dict["point_cloud_dims_min"]
-                ret_dict["point_cloud_dims_max"] = dense_ret_dict["point_cloud_dims_max"]
-                ## TODO: process vote label
             
             ## reference object
             match_mask = (ret_dict["gt_object_ids"] == target_obj_id).astype(np.float32)
