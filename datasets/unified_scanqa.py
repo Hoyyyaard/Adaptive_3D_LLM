@@ -167,8 +167,35 @@ class Dataset(ScanNetBaseDataset):
         question = self.annotations[idx]['question'].lower()
         answer = random.choice(self.annotations[idx]['answers'])
         
-        # print(question)
-        # print(answer)
+        ## USer: below is used for only input answer related pcs to model
+        if self.args.adaptive_pcd_input:
+            cache_dir = f'{self.args.cache_dir}/scanqa'
+            if not os.path.exists(cache_dir):
+                os.makedirs(cache_dir)
+            exist_npy = os.listdir(cache_dir)
+            exist_npy = [npy.split(".")[0] for npy in exist_npy]
+            uni_key = f"{scan_name}_{qs_id}"
+            cache_path = f'{cache_dir}/{uni_key}'
+
+            dense_ret_dict = self._get_scan_data_adaptive(scan_name)
+            
+            raw_pointclouds = dense_ret_dict["point_clouds"]
+            instance_labels = dense_ret_dict["instance_labels"]
+            target_obj_id = random.choice(self.annotations[idx]['object_ids'])
+            object_num = len(self.annotations[idx]['object_ids'])
+            obj_idx = instance_labels == (target_obj_id + 1)
+            objects_pcd = open3d.geometry.PointCloud()
+            objects_pcd.points = open3d.utility.Vector3dVector(raw_pointclouds[:,:3][obj_idx])
+            bbox = objects_pcd.get_axis_aligned_bounding_box()
+            bbox_size = [bbox.max_bound[i] - bbox.min_bound[i] for i in range(len(bbox.max_bound))]
+            object_size = bbox_size[0] * bbox_size[1] * bbox_size[2]
+            
+            from src.utils import dense_pointclouds
+            if uni_key in exist_npy:
+                ret_dict = np.load(f'{cache_path}.npy',allow_pickle=True).tolist()
+            else:
+                ret_dict = dense_pointclouds(dense_ret_dict["point_clouds"], dense_ret_dict["instance_labels"], self.annotations[idx]['object_ids'], object_size, object_num, self.dataset_config, scan_name, self.center_normalizing_range)
+                np.save(cache_path, ret_dict)
 
         ## ==== reference object
         target_obj_id = np.asarray(self.annotations[idx]['object_ids'])
@@ -202,17 +229,21 @@ class Dataset(ScanNetBaseDataset):
         
         
         if self.split == 'train' and random.random() < 0.25:
-
-            target_obj_id = random.choice(self.annotations[idx]['object_ids'])
             try:
-                point_clouds = ret_dict["point_clouds"][:, :3]  # x, y, z
-                object_points = point_clouds[ret_dict["instance_labels"] == (target_obj_id + 1)]    # npt x 3
-                click_query[0] = random.choice(object_points)
-            except:
-                match_mask = (ret_dict["gt_object_ids"] == target_obj_id).astype(np.float32)
-                match_mask = match_mask * ret_dict["gt_box_present"]
-                click_query[0] = ret_dict["gt_box_centers"][match_mask == 1].reshape(3,).astype(np.float32)
-            click_mask[0] = 1
+                target_obj_id = random.choice(self.annotations[idx]['object_ids'])
+                try:
+                    point_clouds = ret_dict["point_clouds"][:, :3]  # x, y, z
+                    object_points = point_clouds[ret_dict["instance_labels"] == (target_obj_id + 1)]    # npt x 3
+                    click_query[0] = random.choice(object_points)
+                except:
+                    match_mask = (ret_dict["gt_object_ids"] == target_obj_id).astype(np.float32)
+                    match_mask = match_mask * ret_dict["gt_box_present"]
+                    click_query[0] = ret_dict["gt_box_centers"][match_mask == 1].reshape(3,).astype(np.float32)
+                click_mask[0] = 1
+            except Exception as e:
+                print(e)
+                click_mask[0] = 0
+
         
         ret_dict['box_query'] = box_query.astype(np.float32)
         ret_dict['box_mask'] = box_mask.astype(np.float32)
@@ -237,35 +268,7 @@ class Dataset(ScanNetBaseDataset):
         # objects_pcd.colors = open3d.utility.Vector3dVector(ret_dict['point_clouds'][:,3:6])
         # open3d.visualization.draw_geometries([objects_pcd])
         
-        ## USer: below is used for only input answer related pcs to model
-        if self.args.adaptive_pcd_input:
-            cache_dir = f'{self.args.cache_dir}/scanqa'
-            if not os.path.exists(cache_dir):
-                os.makedirs(cache_dir)
-            exist_npy = os.listdir(cache_dir)
-            exist_npy = [npy.split(".")[0] for npy in exist_npy]
-            uni_key = f"{scan_name}_{qs_id}"
-            cache_path = f'{cache_dir}/{uni_key}'
-
-            dense_ret_dict = self._get_scan_data_adaptive(scan_name)
-            
-            raw_pointclouds = dense_ret_dict["point_clouds"]
-            instance_labels = dense_ret_dict["instance_labels"]
-            target_obj_id = random.choice(self.annotations[idx]['object_ids'])
-            object_num = len(self.annotations[idx]['object_ids'])
-            obj_idx = instance_labels == (target_obj_id + 1)
-            objects_pcd = open3d.geometry.PointCloud()
-            objects_pcd.points = open3d.utility.Vector3dVector(raw_pointclouds[:,:3][obj_idx])
-            bbox = objects_pcd.get_axis_aligned_bounding_box()
-            bbox_size = [bbox.max_bound[i] - bbox.min_bound[i] for i in range(len(bbox.max_bound))]
-            object_size = bbox_size[0] * bbox_size[1] * bbox_size[2]
-            
-            from src.utils import dense_pointclouds
-            if uni_key in exist_npy:
-                ret_dict = np.load(f'{cache_path}.npy',allow_pickle=True).tolist()
-            else:
-                ret_dict = dense_pointclouds(dense_ret_dict["point_clouds"], dense_ret_dict["instance_labels"], [target_obj_id], object_size, object_num, self.dataset_config, scan_name, self.center_normalizing_range)
-                np.save(cache_path, ret_dict)
+        
             
             
         ## USer: below are used for debug
