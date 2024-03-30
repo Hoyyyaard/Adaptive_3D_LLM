@@ -15,7 +15,7 @@ python main.py \
     --qformer_vocab bert-base-embedding \
     --checkpoint_dir ckpts/opt-1.3b/gpu003/ll3da-scannet-adaptive-traindet-wodetloss-new\
     --max_epoch 32 \
-    --dist_url tcp://localhost:11335 \
+    --dist_url tcp://localhost:11347 \
     --eval_every_iteration 1000000 \
     --start_eval_after 100 \
     --save_every 10000 \

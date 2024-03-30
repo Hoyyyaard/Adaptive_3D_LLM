@@ -55,9 +55,15 @@ def dense_pointclouds(raw_pointclouds, instance_pointclouds, target_obj_id_list,
     TOTAL_POINT_NUM = 40000
     apn = int(os.getenv("adaptive_pcd_num", 10000))
     ADAPATIVE_POINT_NUM = apn
-    TGT_OBJ_PROB = 0.7
-    INFLATE_PROB = 0.3
-    REMAIN_PROB = 0.2
+    
+    if os.getenv("only_sample_tgt", False) == "True":
+        TGT_OBJ_PROB = 0.5
+        INFLATE_PROB = 0.5
+        REMAIN_PROB = 0.
+    else:
+        TGT_OBJ_PROB = 0.7
+        INFLATE_PROB = 0.3
+        REMAIN_PROB = 0.2
     
     if object_size <= 0.001:
         scale = 10
@@ -85,8 +91,8 @@ def dense_pointclouds(raw_pointclouds, instance_pointclouds, target_obj_id_list,
         min_bound = bbox.get_min_bound()
         max_bound = bbox.get_max_bound()
         # TODO: 这里的高度边界应该选择整个场景的边界
-        # min_bound[-1] = point_cloud_dims_min[-1]
-        # max_bound[-1] = point_cloud_dims_max[-1]
+        min_bound[-1] = raw_point_cloud_dims_min[-1]
+        max_bound[-1] = raw_point_cloud_dims_max[-1]
         # 选择边界框内的余下点云的点
         indices_within_bbox = []
         for i, point in enumerate(remaining_pcd):
@@ -101,6 +107,8 @@ def dense_pointclouds(raw_pointclouds, instance_pointclouds, target_obj_id_list,
     ## tgt object 膨胀点云信息（不包括tgt obj点云）
     inflate_pcd_list = []
     instance_inflate_pcd_list = []
+    raw_point_cloud_dims_min = raw_pointclouds[..., :3].min(axis=0)
+    raw_point_cloud_dims_max = raw_pointclouds[..., :3].max(axis=0)
     for target_obj_id in target_obj_id_list:
         ## 得到特定物体类别的点云
         obj_idx = instance_pointclouds == (target_obj_id + 1)
@@ -119,9 +127,7 @@ def dense_pointclouds(raw_pointclouds, instance_pointclouds, target_obj_id_list,
         instance_remaining_pcd = instance_pointclouds[remaining_indices] 
         
         ## 选择剩余点云中膨胀后边界框内点
-        st = time.time()
         indices_within_bbox = _get_inflate_axis_aligned_bounding_box(tmp_tgt_object_pcd[:,:3], remaining_pcd[:,:3])
-        # print(f'_get_inflate_axis_aligned_bounding_box time: {time.time()-st}')
         
         tmp_inflate_pcd = remaining_pcd[indices_within_bbox, :] 
         inflate_pcd_list.append(tmp_inflate_pcd)

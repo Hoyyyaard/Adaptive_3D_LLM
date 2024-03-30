@@ -9,10 +9,11 @@ python main.py \
     --detector detector_Vote2Cap_DETR \
     --captioner ll3da \
     --warm_lr_epochs 1 \
+    --pretrained_weights ./pretrained/vote2cap-detr/scannet_vote2cap_detr_XYZ_COLOR_NORMAL.pth \
     --dataset unified_scanqa,unified_densecap_nr3d,unified_densecap_scanrefer \
     --vocab facebook/opt-1.3b \
     --qformer_vocab bert-base-embedding \
-    --checkpoint_dir ckpts/opt-1.3b/gpu003/region-encoder\
+    --checkpoint_dir ckpts/opt-1.3b/adaptive/official-like-encoder-region-tuned\
     --max_epoch 32 \
     --dist_url tcp://localhost:19345 \
     --eval_every_iteration 1000000 \
@@ -24,6 +25,7 @@ python main.py \
     --max_des_len 512 \
     --max_prompt 1 --use_beam_search \
     --adaptive_pcd_input \
-    --cache_dir results/process_datasets/adaptive_pcds_adapt_scale_4w_wvote \
+    --cache_dir results/process_datasets/adaptive_pcds_4w \
     --train_encoder \
     --adaptive_pcd_num 40000 \
+    --no_sample_prob

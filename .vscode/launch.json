@@ -19,7 +19,7 @@
                 "--captioner", "ll3da",
                 
                 "--checkpoint_dir", "./ckpts/opt-1.3b/ll3da-scannet",
-                "--test_ckpt", "ckpts/opt-1.3b/gpu003/region-encoder/checkpoint.pth",
+                "--test_ckpt", "ckpts/opt-1.3b/adaptive/ll3da-scannet-adaptive-traindet-wdetloss-region-pcd-from-scratch/checkpoint_20k.pth",
                 "--dataset", "unified_densecap_scanrefer",
                 "--vocab", "facebook/opt-1.3b",
                 "--qformer_vocab", "bert-base-embedding",
@@ -37,11 +37,12 @@
                 "--cache_dir","results/debug",
                 "--vis_detection",
                 "--adaptive_pcd_input",
-                "--adaptive_pcd_num","10000"
+                "--adaptive_pcd_num","40000",
+                "--test_min_iou","0.25"
             ],
             "env": {
                 "PYTHONWARNINGS":"ignore:semaphore_tracker:UserWarning",
-                "CUDA_VISIBLE_DEVICES":"7",
+                "CUDA_VISIBLE_DEVICES":"6",
                 "MKL_NUM_THREADS":"1",
                 "NUMEXPR_NUM_THREADS":"1",
                 "OMP_NUM_THREADS":"1",

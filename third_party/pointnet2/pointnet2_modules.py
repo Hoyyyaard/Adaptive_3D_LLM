@@ -226,6 +226,7 @@ class PointnetSAModuleVotes(nn.Module):
             (B, npoint) tensor of the inds
         """
 
+        
         xyz_flipped = xyz.transpose(1, 2).contiguous()
         if inds is None:
             inds = pointnet2_utils.furthest_point_sample(xyz, self.npoint)

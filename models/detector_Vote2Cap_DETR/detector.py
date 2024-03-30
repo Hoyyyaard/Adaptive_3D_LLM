@@ -12,7 +12,6 @@ from utils.pc_util import scale_points, shift_scale_points
 from datasets.scannet import BASE
 from typing import Dict
 
-from models.detector_Vote2Cap_DETR.config import model_config
 from models.detector_Vote2Cap_DETR.criterion import build_criterion
 from models.detector_Vote2Cap_DETR.helpers import GenericMLP
 
@@ -310,7 +309,7 @@ class Model_Vote2Cap_DETR(nn.Module):
         
         ## USer
         inds = None
-        if os.getenv("adaptive_pcd_input", 'False') == 'True':
+        if os.getenv("adaptive_pcd_input", 'False') == 'True' and not os.getenv("no_sample_prob", 'False') == 'True':
             inds = torch.multinomial(inputs['sample_prob'], self.tokenizer.npoint, replacement=False).to(point_clouds.device).int()
             
         enc_xyz, enc_features, enc_inds = self.run_encoder(point_clouds, inds)
@@ -430,6 +429,12 @@ def build_decoder(cfg):
 
 
 def detector(args, dataset_config):
+    
+    if args.local_config:
+        from models.detector_Vote2Cap_DETR.config_local import model_config
+    else:
+        from models.detector_Vote2Cap_DETR.config import model_config
+    
     cfg = model_config(args, dataset_config)
     
     tokenizer = build_preencoder(cfg)

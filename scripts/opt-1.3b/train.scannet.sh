@@ -12,7 +12,7 @@ python main.py \
     --dataset unified_scanqa,unified_densecap_nr3d,unified_densecap_scanrefer \
     --vocab facebook/opt-1.3b \
     --qformer_vocab bert-base-embedding \
-    --checkpoint_dir ckpts/opt-1.3b/gpu003/ll3da-scannet-adaptive-traindet-wdetloss-new-region-pcd-from-scratch\
+    --checkpoint_dir ckpts/opt-1.3b/adaptive/ll3da-scannet-adaptive-traindet-wdetloss-1w-from-scratch-local_config-only_sample_tgt\
     --max_epoch 32 \
     --dist_url tcp://localhost:12345 \
     --eval_every_iteration 1000000 \
@@ -24,5 +24,7 @@ python main.py \
     --max_des_len 512 \
     --max_prompt 1 --use_beam_search \
     --adaptive_pcd_input \
-    --cache_dir results/process_datasets/adaptive_pcds_adapt_scale_4w_wvote \
-    --adaptive_pcd_num 40000 \
+    --cache_dir results/process_datasets/adaptive_pcds_1w_only_sample_tgt \
+    --adaptive_pcd_num 10000 \
+    --local_config \
+    --only_sample_tgt

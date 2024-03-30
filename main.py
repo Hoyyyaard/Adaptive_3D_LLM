@@ -123,18 +123,27 @@ def make_args_parser():
     parser.add_argument("--cache_dir", required=True)
     parser.add_argument("--vis_detection", action='store_true')
     parser.add_argument("--train_encoder", action='store_true')
+    parser.add_argument("--only_sample_tgt", action='store_true')
+    ## Use less vote to model dense region
+    parser.add_argument("--local_config", action='store_true')
+    ## Use to train det like official to random sample Pseed
+    parser.add_argument("--no_sample_prob", action='store_true')
     
     args = parser.parse_args()
     args.use_height = not args.no_height
     
     os.environ['adaptive_pcd_input'] = str(args.adaptive_pcd_input)
     os.environ['adaptive_pcd_num'] = str(args.adaptive_pcd_num)
+    os.environ['only_sample_tgt'] = str(args.only_sample_tgt)
+    os.environ['no_sample_prob'] = str(args.no_sample_prob)
     print(f'adaptive_pcd_input: {args.adaptive_pcd_input}')
     print(f'caption_box_query: {args.caption_box_query}')
     print(f'cache dir: {args.cache_dir}')
     print(f'adaptive_pcd_num: {args.adaptive_pcd_num}')
     print(f'train_encoder: {args.train_encoder}')
-    
+    print(f'local_config: {args.local_config}')
+    print(f'no_sample_prob: {args.no_sample_prob}')
+
     return args
 
 
