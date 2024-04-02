@@ -21,7 +21,10 @@ python main.py \
     --max_prompt 1 \
     --use_beam_search \
     --test_only \
-    --log_dir results/toy_exp/scanqa/base-model-adaptive-pcd-input \
-    --adaptive_pcd_input 
+    --log_dir results/toy_exp/scanqa/official-region-input \
+    --adaptive_pcd_input \
+    --cache_dir results/process_datasets/adaptive_pcds_4w \
+    --adaptive_pcd_num 40000 \
+    --no_sample_prob \
 
 

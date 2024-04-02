@@ -162,7 +162,7 @@ class Dataset(ScanNetBaseDataset):
         task_name = self.annotations[idx]['task_name']
         
         if self.args.vis_detection:
-            scan_name = "scene0025_00"
+            scan_name = "scene0040_00"
             
         ret_dict = self._get_scan_data(scan_name)
         
@@ -178,7 +178,7 @@ class Dataset(ScanNetBaseDataset):
         if self.args.adaptive_pcd_input and self.args.vis_detection:
             ## keyboard
             dense_ret_dict = self._get_scan_data_adaptive(scan_name)
-            target_obj_id = 30
+            target_obj_id = 51
             raw_pointclouds = dense_ret_dict["point_clouds"]
             instance_labels = dense_ret_dict["instance_labels"]
             object_num = 1

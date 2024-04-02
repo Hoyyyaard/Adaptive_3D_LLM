@@ -150,6 +150,8 @@ class Dataset(ScanNetBaseDataset):
         scan_name = self.annotations[idx]['scan_id'].split('/')[-1]
         object_id = self.annotations[idx]['target_id']
         object_name = self.annotations[idx]['target']
+        # print(object_name)
+        # print(scan_name)
         task_name = self.annotations[idx]['task_name']
         ret_dict = self._get_scan_data(scan_name)
         

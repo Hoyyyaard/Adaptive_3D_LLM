@@ -288,6 +288,7 @@ class captioner(nn.Module):
         
         response_config = {
             'ov-det': 64,
+            'vg': 64,
             'dense-cap': 48,
             'object_caption': 48,
             'qa': 16,
@@ -301,6 +302,8 @@ class captioner(nn.Module):
             return self.predict_answer(detector_output, inputs, max_gen_length=max_gen_length)
         elif task_name == 'object_caption':
             return self.predict_object_caption(detector_output, inputs, max_gen_length=max_gen_length)
+        elif task_name == 'vg':
+            return self.predict_vg(detector_output, inputs, max_gen_length=max_gen_length)
         else:
             return self.predict_chat(detector_output, inputs, max_gen_length=max_gen_length)
     
@@ -566,7 +569,127 @@ class captioner(nn.Module):
         
         return detector_output
     
-    
+    def predict_vg(self, detector_output: Dict, inputs: Dict, max_gen_length: int=8) -> Dict:
+        
+        # ---- necessary elements
+        embedding_layer = self.transformer.get_input_embeddings()
+        net_device = next(self.parameters()).device
+        # ---- to store llm outputs
+        output_ids = []
+        
+        # ---- llm input preparation
+        instruction = inputs['instruction']             # ntoken
+        instruction_mask = inputs['instruction_mask']   # ntoken
+        box_query = inputs['box_query']
+        click_query = inputs['click_query']
+
+        prefix_tokens = self._get_instruction_response(
+            detector_output=detector_output,
+            inputs=inputs,
+            box_query=box_query,
+            click_query=click_query,
+        )
+        prefix_tokens = prefix_tokens.to(self.dtype)
+        
+        for batch_id in range(prefix_tokens.shape[0]):
+            sample_instruction = instruction[batch_id]     
+            sample_mask = instruction_mask[batch_id]     # ntoken
+            
+            output = generation(
+                self.transformer, 
+                inputs_embeds=torch.cat(
+                    [
+                        prefix_tokens[batch_id].unsqueeze(0),   # 1 x nprefix x n_embd
+                        embedding_layer(sample_instruction[sample_mask == 1]).unsqueeze(0)
+                    ],
+                    dim=1
+                ),
+                max_length=max_gen_length,
+                **self.caption_config
+            )
+            output_ids.append(output['output_ids'])
+        
+        output_ids = torch.cat(output_ids, dim=0)
+        detector_output['output_ids'] = output_ids
+        
+        return detector_output
+
+        #  # ---- necessary elements
+        # embedding_layer = self.transformer.get_input_embeddings()
+        # net_device = next(self.parameters()).device
+        # batch_size, nproposals, _, _ = detector_output['box_corners'].shape
+
+        # # ---- to store llm outputs
+        # output_ids = torch.ones(batch_size, nproposals, max_gen_length).long().to(net_device)
+        # output_ids = output_ids * self.tokenizer.eos_token_id
+        
+        # # ---- llm input preparation
+        # instruction = inputs['instruction'][0]              # ntoken
+        # instruction_mask = inputs['instruction_mask'][0]    # ntoken
+        # instruction_id = instruction[instruction_mask == 1] # ntoken
+        # instruction_id = instruction_id[None, :].repeat(batch_size, 1)
+        # instruction_embedding = embedding_layer(instruction_id) # batch x ntoken x n_embd
+        
+        # prefix_tokens = []
+        # for proposal_id in range(nproposals):
+        #     # prepare the visual prompt
+        #     # box_query are poposal features
+        #     box_query=detector_output['box_corners'][:, [proposal_id]]  # batch x 1 x 8 x 3
+        #     # point query for localization
+        #     click_query=None
+        #     click_query=detector_output['query_xyz'][:, [proposal_id]]  # batch x 1 x 3
+            
+        #     instruct_prefix_feature=self._get_instruction_response(     # batch x ntoken x n_embd
+        #         detector_output=detector_output,
+        #         inputs=inputs,
+        #         box_query=box_query,        # batch x 1 x 8 x 3
+        #         click_query=click_query,
+        #     )
+        #     instruct_prefix_feature = torch.cat((instruct_prefix_feature, instruction_embedding), dim=1)
+        #     prefix_tokens.append(instruct_prefix_feature.unsqueeze(1))
+        # # batch x nproposal x 1 x n_embd
+        # prefix_tokens = torch.cat(prefix_tokens, dim=1).to(self.dtype)
+        
+        # ## filter and rank the queries
+        # sem_cls_logits = detector_output["sem_cls_logits"]
+        # objectness_mask = sem_cls_logits.argmax(-1) != (sem_cls_logits.shape[-1] - 1)
+
+        # ###################match the proposal for the input query box########################
+        # # prefix_tokens： (B, num_proposal, L, D)
+        # # torch.gather(prefix_tokens, 1, indices.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).expand(-1, 1, 50, 1048))
+        # B, num_proposal, L, D = prefix_tokens.shape
+        # _, num_query, _, _ = inputs['box_query'].shape
+        # assert num_query == 1
+
+        # # FIXME: check the select process is correct for multi-box query, the code are for debug only
+        # # (B, num_query), (B, num_query, num_proposal, 1)
+        # matched_index, matched_iou = select_proposal_index(prop_box_corners=detector_output['box_corners'], prop_sem_mask=objectness_mask, box_query=inputs['box_query'])
+        # # (B, num_query, L, D)
+        # matched_prefix_tokens = torch.gather(prefix_tokens, 1, matched_index.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, L, D))
+        # matched_prefix_tokens = matched_prefix_tokens.unsqueeze(0)
+
+        # pass
+        
+        # ## limit the proposals for generating captions
+        # candidate_prefix = prefix_tokens[objectness_mask].to(self.dtype)
+
+        # gather_output_ids = []
+        # for start_idx in range(0, candidate_prefix.shape[0], self.max_gen_per_iter):
+        #     prefix = candidate_prefix[start_idx: start_idx + self.max_gen_per_iter]
+        #     scene_cap_output = generation(
+        #         self.transformer, 
+        #         inputs_embeds=prefix,
+        #         max_length=max_gen_length,
+        #         **self.caption_config
+        #     )
+        #     gather_output_ids.append(scene_cap_output['output_ids'])
+        # gather_output_ids = torch.cat(gather_output_ids, dim=0)
+        
+        # output_ids[objectness_mask] = gather_output_ids
+        # detector_output['output_ids'] = output_ids
+        
+        # return detector_output
+
 def viusualization_preict_bbox(pcd, pred_box_corners, gt_box_corners):
     from utils.box_util import flip_axis_to_camera_np
     import open3d
@@ -600,3 +723,4 @@ def viusualization_preict_bbox(pcd, pred_box_corners, gt_box_corners):
     vis_list = [objects_pcd]
     vis_list.extend(pred_bbox_line_set_list)
     open3d.visualization.draw_geometries(vis_list)
+    

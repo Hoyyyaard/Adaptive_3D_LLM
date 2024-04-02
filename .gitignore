@@ -16,3 +16,4 @@ bert-base-embedding
 *.egg
 *.so
 src/openscene/data
+None

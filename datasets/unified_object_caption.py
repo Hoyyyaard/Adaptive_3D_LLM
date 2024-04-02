@@ -171,17 +171,11 @@ class Dataset(ScanNetBaseDataset):
         
         target_obj_id = int(self.annotations[idx]['object_id'])
         
-        
-        ret_dict['scan_idx'] = np.array(idx).astype(np.int64)
-        ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
-        ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
-        ret_dict['qformer_input_ids'] = qformer_inputs['input_ids'][0].astype(np.int64)
-        ret_dict['qformer_attention_mask'] = qformer_inputs['attention_mask'][0].astype(np.float32)
-        
-        
         ## USer: below is used for only input answer related pcs to model
         if self.args.adaptive_pcd_input:
-            cache_dir = 'results/process_datasets/adaptive_pcds_adapt_scale_1w/scanrefer'
+            cache_dir = f'{self.args.cache_dir}/scanrefer'
+            if not os.path.exists(cache_dir):
+                os.makedirs(cache_dir)
             exist_npy = os.listdir(cache_dir)
             exist_npy = [npy.split(".")[0] for npy in exist_npy]
             uni_key = f"{scan_name}_{object_id}_{object_name}"
@@ -238,6 +232,13 @@ class Dataset(ScanNetBaseDataset):
         ret_dict['box_mask'] = box_mask.astype(np.float32)
         ret_dict['click_query'] = click_query.astype(np.float32)
         ret_dict['click_mask'] = click_mask.astype(np.float32)
+        
+        ret_dict['scan_idx'] = np.array(idx).astype(np.int64)
+        ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
+        ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
+        ret_dict['qformer_input_ids'] = qformer_inputs['input_ids'][0].astype(np.int64)
+        ret_dict['qformer_attention_mask'] = qformer_inputs['attention_mask'][0].astype(np.float32)
+        
             
         
         return ret_dict

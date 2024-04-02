@@ -56,7 +56,7 @@ def dense_pointclouds(raw_pointclouds, instance_pointclouds, target_obj_id_list,
     apn = int(os.getenv("adaptive_pcd_num", 10000))
     ADAPATIVE_POINT_NUM = apn
     
-    if os.getenv("only_sample_tgt", False) == "True":
+    if os.getenv("only_sample_tgt", 'False') == "True":
         TGT_OBJ_PROB = 0.5
         INFLATE_PROB = 0.5
         REMAIN_PROB = 0.
@@ -319,7 +319,7 @@ def dense_pointclouds_from_bbox(raw_pointclouds, tgt_bbox, object_size, object_n
         geo.color = [1,0,0]
         return geo
 
-    def point_inside_obb(point, obb, scale):
+    def point_inside_obb(point, obb, scale, scene_height_extend=None):
         center = obb.get_center()
         obb.scale(scale, center)
         
@@ -327,6 +327,9 @@ def dense_pointclouds_from_bbox(raw_pointclouds, tgt_bbox, object_size, object_n
         center = np.array(obb.center)
         extent = np.array(obb.extent)
         R = np.array(obb.R)
+        # 将区域点云上下阈值改变为全局阈值
+        if not scene_height_extend is None:
+            extent[-1] = scene_height_extend
 
         # 将点变换到局部坐标系
         point_local = np.dot((point - center), np.linalg.inv(R))
@@ -347,16 +350,16 @@ def dense_pointclouds_from_bbox(raw_pointclouds, tgt_bbox, object_size, object_n
     indices_within_bbox = []
     bbox_9dof = _9dof_to_box(tgt_bbox)
     
-    
     # pcd = open3d.geometry.PointCloud()
     # pcd.points = open3d.utility.Vector3dVector(raw_pointclouds[:,:3])
     # pcd.colors = open3d.utility.Vector3dVector(raw_pointclouds[:,3:6])
     # open3d.visualization.draw_geometries([pcd, bbox_9dof])
     
+    scene_height_extend = raw_pointclouds[..., :3].max(axis=0)[-1] - raw_pointclouds[..., :3].min(axis=0)[-1]
     for i in range(raw_pointclouds.shape[0]):
         if point_inside_obb(raw_pointclouds[i,:3], deepcopy(bbox_9dof), 1):
             tgt_obj_indices.append(i)
-        elif point_inside_obb(raw_pointclouds[i,:3], deepcopy(bbox_9dof), inflate_scale):
+        elif point_inside_obb(raw_pointclouds[i,:3], deepcopy(bbox_9dof), inflate_scale, scene_height_extend):
             indices_within_bbox.append(i)
             
     tgt_obj_indices = np.array(tgt_obj_indices)
@@ -402,7 +405,7 @@ def dense_pointclouds_from_bbox(raw_pointclouds, tgt_bbox, object_size, object_n
     # objects_pcd.points = open3d.utility.Vector3dVector(adaptive_pcds[:,:3])
     # objects_pcd.colors = open3d.utility.Vector3dVector(adaptive_pcds[:,3:6])
     # center = bbox_9dof.get_center()
-    # bbox_9dof.scale(inflate_scale, center)
+    # # bbox_9dof.scale(inflate_scale, center)
     # open3d.visualization.draw_geometries([objects_pcd, bbox_9dof])
     
     return adaptive_pcds, adaptive_prob
