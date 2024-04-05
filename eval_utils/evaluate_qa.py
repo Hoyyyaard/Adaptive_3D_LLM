@@ -128,7 +128,10 @@ def evaluate(
                                             skip_special_tokens=True,
                                             clean_up_tokenization_spaces=False
                                             )
-        outputs = model(model_input, is_eval=True, task_name='qa')
+        if args.finetune_flex_opt:
+            outputs = model(batch_data_label, is_eval=True, task_name='qa')
+        else:
+            outputs = model(model_input, is_eval=True, task_name='qa')
         
         outputs = dict(
             output_ids=outputs["output_ids"],
@@ -146,6 +149,8 @@ def evaluate(
         
         sample_index = batch_data_label['scan_idx'].cpu().tolist()
         gt_answers = [annotations[sample_index[idx]]['answers'] for idx in range(output_ids.shape[0])]
+        print(f"GT: {gt_answers}")
+        print(f"Pred: {answers}")
         for idx in range(output_ids.shape[0]):
             anno = annotations[sample_index[idx]]
             key = '-'.join((anno['question_id'], anno['question']))

@@ -4,7 +4,7 @@ import torch
 
 from collections import OrderedDict
 
-from engine import do_train, do_preprocess
+from engine import do_train, do_preprocess, do_flex_opt_finetune
 from models.model_general import CaptionNet
 from datasets.scannet_base_dataset import DatasetConfig
 from torch.multiprocessing import set_start_method
@@ -129,6 +129,8 @@ def make_args_parser():
     ## Use to train det like official to random sample Pseed
     parser.add_argument("--no_sample_prob", action='store_true')
     
+    parser.add_argument("--finetune_flex_opt", action='store_true')
+    
     args = parser.parse_args()
     args.use_height = not args.no_height
     
@@ -143,7 +145,9 @@ def make_args_parser():
     print(f'train_encoder: {args.train_encoder}')
     print(f'local_config: {args.local_config}')
     print(f'no_sample_prob: {args.no_sample_prob}')
-
+    print('============== fintune flex opt =====================')
+    print(f'finetune_flex_opt: ', args.finetune_flex_opt)
+    
     return args
 
 
@@ -166,7 +170,6 @@ def build_dataloader_func(args, dataset, split):
         worker_init_fn=my_worker_init_fn,
     )
     return sampler, dataloader
-
 
 def build_dataset(args):
     
@@ -230,7 +233,6 @@ def build_dataset(args):
     
     return dataset_config, datasets, dataloaders    
     
-
 def main(local_rank, args):
     
     if args.ngpus > 1:
@@ -343,7 +345,7 @@ def main(local_rank, args):
                 args.checkpoint_dir, model_no_ddp, optimizer
             )
             args.start_epoch = loaded_epoch + 1
-            do_train(
+            do_flex_opt_finetune(
                 args,
                 model,
                 model_no_ddp,
@@ -363,14 +365,134 @@ def main(local_rank, args):
                 None,
             )
             
+def finetune_flex_opt_main(local_rank, args):
+    if args.ngpus > 1:
+        init_distributed(
+            local_rank,
+            global_rank=local_rank,
+            world_size=args.ngpus,
+            dist_url=args.dist_url,
+            dist_backend="nccl",
+        )
+    
+    torch.cuda.set_device(local_rank)
+    np.random.seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed + get_rank())
+    
+    if args.checkpoint_dir is not None:
+        pass
+    elif args.test_ckpt is not None:
+        args.checkpoint_dir = os.path.dirname(args.test_ckpt)
+        print(f'testing directory: {args.checkpoint_dir}')
+    else:
+        raise AssertionError(
+            'Either checkpoint_dir or test_ckpt should be presented!'
+        )
+    os.makedirs(args.checkpoint_dir, exist_ok=True)
+    
+    ### build datasets and dataloaders
+    dataset_config, datasets, dataloaders = build_dataset(args)
+    from src.modeling_opt_flex import FlexOPTForCausalLM
+    model = FlexOPTForCausalLM.from_pretrained('ckpts/opt-model')
+    
+    # testing phase
+    if args.test_only:
+
+        # try:
+        checkpoint = torch.load(args.test_ckpt, map_location=torch.device("cpu"))
+        model.load_state_dict(checkpoint, strict=False)
+        # except:
+        #     print('test the model from scratch...')
+        
+        model_no_ddp = model.cuda()
+        model = model.cuda(local_rank)
+        
+        if is_distributed():
+            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+            model = torch.nn.parallel.DistributedDataParallel(
+                model, device_ids=[local_rank]
+            )
+        
+        for test_loader in dataloaders['test']:
+            test_loader.dataset.eval_func(
+                args,
+                -1,
+                model,
+                dataset_config,
+                test_loader
+            )
+        
+    # training phase
+    else:
+        model.gradient_checkpointing_enable()
+        assert (
+            args.checkpoint_dir is not None
+        ), "Please specify a checkpoint dir using --checkpoint_dir"
+        os.makedirs(args.checkpoint_dir, exist_ok=True)
             
+        ### whether or not use pretrained weights
+        if args.pretrained_weights is not None:
+            checkpoint = torch.load(args.pretrained_weights, map_location="cpu")
+            model.load_state_dict(checkpoint, strict=False)
+            
+            print('====                                          ====')
+            print('==== loading following pre-trained parameters ====')
+            print('====                                          ====')
+            for name, param in checkpoint.items():
+                print('\t', name, param.shape)
+        
+        model_no_ddp = model.cuda()
+        model = model.cuda(local_rank)
+        if is_distributed():
+            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+            model = torch.nn.parallel.DistributedDataParallel(
+                model, device_ids=[local_rank], find_unused_parameters=True
+            )
+            
+        if args.optimizer == 'AdamW':
+            optimizer = torch.optim.AdamW(
+                filter(lambda params: params.requires_grad, model_no_ddp.parameters()), 
+                lr=args.base_lr, 
+                weight_decay=args.weight_decay
+            )
+        elif args.optimizer == 'SGD':
+            optimizer = torch.optim.SGD(
+                filter(lambda params: params.requires_grad, model_no_ddp.parameters()), 
+                lr=args.base_lr, 
+                weight_decay=args.weight_decay
+            )
+        else:
+            raise NotImplementedError
+        
+        print('====                                          ====')
+        print('====  Only training the following parameters  ====')
+        print('====                                          ====')
+        for name, param in model_no_ddp.named_parameters():
+            if param.requires_grad is True:
+                print('\t', name, param.shape)
+        
+        loaded_epoch, best_val_metrics = resume_if_possible(
+            args.checkpoint_dir, model_no_ddp, optimizer
+        )
+        args.start_epoch = loaded_epoch + 1
+        do_flex_opt_finetune(
+            args,
+            model,
+            model_no_ddp,
+            optimizer,
+            dataset_config,
+            dataloaders,
+            best_val_metrics,
+        )
+
 
 def launch_distributed(args):
     world_size = args.ngpus
+    main_func = main if not args.finetune_flex_opt else finetune_flex_opt_main
     if world_size == 1:
-        main(local_rank=0, args=args)
+        main_func(local_rank=0, args=args)
     else:
-        torch.multiprocessing.spawn(main, nprocs=world_size, args=(args,))
+        torch.multiprocessing.spawn(main_func, nprocs=world_size, args=(args,))
 
 if __name__ == "__main__":
     args = make_args_parser()

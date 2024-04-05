@@ -128,6 +128,9 @@ class Dataset(ScanNetBaseDataset):
         ## USer
         self.dense_train_info = {}
         self.dense_ret_dicts = {}
+        
+        from src.openscene_dense_pcd_fts_cache import OpenScene_Fts_Cache
+        self.openscene_fts_cache = OpenScene_Fts_Cache()
     
     def _tag_dataset(self, corpus, task_name): 
         for anno in corpus:
@@ -215,14 +218,8 @@ class Dataset(ScanNetBaseDataset):
             click_query = np.zeros((self.max_prompts, 3))
             click_mask = np.zeros((self.max_prompts,))
             
-            if random.random() > 0.5:
-                # use box to identify an object
-                ref_gt_box_corner = \
-                    ret_dict["gt_box_corners"][match_mask == 1].reshape(8, 3).astype(np.float32)
-                box_query[0] = ref_gt_box_corner
-                box_mask[0] = 1
-            else:
-                # use click to identify an object
+            if self.args.finetune_flex_opt:
+                ## TODO: 检查openscene的点云和ll3da的是否一致
                 try:
                     point_clouds = ret_dict["point_clouds"][:, :3]  # x, y, z
                     object_points = point_clouds[ret_dict["instance_labels"] == (target_obj_id + 1)]    # npt x 3
@@ -230,6 +227,22 @@ class Dataset(ScanNetBaseDataset):
                 except:
                     click_query[0] = ret_dict["gt_box_centers"][match_mask == 1].reshape(3,).astype(np.float32)
                 click_mask[0] = 1
+            else:
+                if random.random() > 0.5:
+                    # use box to identify an object
+                    ref_gt_box_corner = \
+                        ret_dict["gt_box_corners"][match_mask == 1].reshape(8, 3).astype(np.float32)
+                    box_query[0] = ref_gt_box_corner
+                    box_mask[0] = 1
+                else:
+                    # use click to identify an object
+                    try:
+                        point_clouds = ret_dict["point_clouds"][:, :3]  # x, y, z
+                        object_points = point_clouds[ret_dict["instance_labels"] == (target_obj_id + 1)]    # npt x 3
+                        click_query[0] = random.choice(object_points)
+                    except:
+                        click_query[0] = ret_dict["gt_box_centers"][match_mask == 1].reshape(3,).astype(np.float32)
+                    click_mask[0] = 1
             
             ret_dict['box_query'] = box_query.astype(np.float32)
             ret_dict['box_mask'] = box_mask.astype(np.float32)
@@ -246,6 +259,9 @@ class Dataset(ScanNetBaseDataset):
         ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
         ret_dict['qformer_input_ids'] = qformer_inputs['input_ids'][0].astype(np.int64)
         ret_dict['qformer_attention_mask'] = qformer_inputs['attention_mask'][0].astype(np.float32)
+        
+        if self.args.finetune_flex_opt:
+            ret_dict.update(self.openscene_fts_cache.get_openscene_scan_datas(scan_name))
         
         return ret_dict
    

@@ -188,9 +188,12 @@ class captioner(nn.Module):
         self.nvocabs = len(self.tokenizer)
         
         ## caption generation cores
+        # from src.modeling_opt_flex import FlexOPTForCausalLM
+        # self.transformer = FlexOPTForCausalLM.from_pretrained('ckpts/opt-model')
         self.transformer = AutoModelForCausalLM.from_pretrained(
             args.vocab,
-            torch_dtype=self.dtype
+            torch_dtype=self.dtype,
+            trust_remote_code = True
         )
         self.n_embd = self.transformer.config.hidden_size
         

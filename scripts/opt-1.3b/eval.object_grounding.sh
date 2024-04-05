@@ -9,7 +9,7 @@ python main.py \
     --detector detector_Vote2Cap_DETR \
     --captioner ll3da \
     --checkpoint_dir results \
-    --test_ckpt ckpts/opt-1.3b/adaptive/adaptive-region-encoder-tuned-scannet/checkpoint.pth \
+    --test_ckpt ckpts/opt-1.3b/ll3da-scannet/checkpoint_best.pth \
     --dataset unified_scanrefer_visual_grounding \
     --vocab facebook/opt-1.3b \
     --qformer_vocab bert-base-embedding \
@@ -22,8 +22,8 @@ python main.py \
     --use_beam_search \
     --test_only \
     --log_dir results/toy_exp/debug \
-    --adaptive_pcd_input \
     --cache_dir results/process_datasets/adaptive_pcds_4w \
     --adaptive_pcd_num 40000 \
     --no_sample_prob \
+    --adaptive_pcd_input \
 

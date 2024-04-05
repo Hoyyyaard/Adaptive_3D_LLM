@@ -409,4 +409,169 @@ def do_train(
         eval_metrics.update(task_metrics)
     return 
     
+def do_flex_opt_finetune(
+    args,
+    model,
+    model_no_ddp,
+    optimizer,
+    dataset_config,
+    dataloaders,
+    best_val_metrics=dict()
+):
+    
+    logout = Logger(args)
+    
+    if is_primary():
+        logout(f"call with args: {args}")
+        logout(f"{model}")
+    
+    curr_iter = args.start_epoch * len(dataloaders['train'])
+    max_iters = args.max_epoch * len(dataloaders['train'])
+    net_device = next(model.parameters()).device
 
+    time_delta = SmoothedValue(window_size=10)
+    loss_avg = SmoothedValue(window_size=10)
+
+    for param in model.parameters():
+        param.requires_grad = True
+    model.train()
+    barrier()
+    
+    max_tolerant_nan = 4
+    curr_nan_times = 0
+    
+    for curr_epoch in tqdm(range(args.start_epoch, args.max_epoch)):
+        
+        if is_distributed():
+            dataloaders["train_sampler"].set_epoch(curr_epoch)
+        
+        pbar = tqdm(total=len(dataloaders['train']))
+        for batch_idx, batch_data_label in enumerate(dataloaders['train']):
+            pbar.update(1)
+
+            curr_time = time.time()
+              
+            curr_iter = curr_epoch * len(dataloaders['train']) + batch_idx
+            curr_lr = adjust_learning_rate(args, optimizer, curr_iter / max_iters)
+            for key in batch_data_label:
+                batch_data_label[key] = batch_data_label[key].to(net_device)
+    
+            # Forward pass
+            optimizer.zero_grad()
+    
+            outputs = model(batch_data_label)
+            loss = outputs['loss']
+            loss = all_reduce_average(loss)
+            
+            if not math.isfinite(loss.item()):
+                if curr_nan_times < max_tolerant_nan:
+                    logout("Loss in not finite. Skip this training step.")
+                    curr_nan_times += 1
+                    continue
+                else:
+                    logout("Loss in not finite. Terminate training.")
+                    exit(-1)
+            curr_nan_times = 0
+            
+            loss.backward()
+            if args.clip_gradient > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_gradient)
+            optimizer.step()
+    
+            time_delta.update(time.time() - curr_time)
+            loss_avg.update(loss.item())
+    
+            # logging
+            if is_primary() and curr_iter % args.log_every == 0:
+                mem_mb = torch.cuda.max_memory_allocated() / (1024 ** 2)
+                eta_seconds = (max_iters - curr_iter) * time_delta.avg
+                eta_str = str(datetime.timedelta(seconds=int(eta_seconds)))
+                logout(
+                    f"Epoch [{curr_epoch}/{args.max_epoch}]; "
+                    f"Iter [{curr_iter}/{max_iters}]; "
+                    f"Loss {loss_avg.avg:0.2f}; "
+                    f"LR {curr_lr:0.2e}; Iter time {time_delta.avg:0.2f}; "
+                    f"ETA {eta_str}; Mem {mem_mb:0.2f}MB"
+                )
+            
+            barrier()
+            # save ckpt
+            if is_primary() and (curr_iter + 1) % args.save_every == 0:
+                save_checkpoint(
+                    args.checkpoint_dir,
+                    model_no_ddp,
+                    optimizer,
+                    curr_epoch,
+                    args,
+                    best_val_metrics,
+                    filename=f"checkpoint_{(curr_iter + 1) // 1000}k.pth",
+                )
+            
+            # eval
+            # if (curr_iter + 1) % args.eval_every_iteration == 0 \
+            #     and (curr_iter + 1) > args.start_eval_after:
+                
+            #     eval_metrics = {}
+            #     model.eval()
+            #     for test_loader in dataloaders['test']:
+            #         task_metrics = test_loader.dataset.eval_func(
+            #             args,
+            #             curr_epoch,
+            #             model,
+            #             dataset_config,
+            #             test_loader,
+            #             logout,
+            #             curr_train_iter=curr_iter
+            #         )
+            #         eval_metrics.update(task_metrics)
+            #     model.train()
+                
+            #     if not best_val_metrics or (
+            #         best_val_metrics[args.criterion] < eval_metrics[args.criterion]
+            #     ):
+            #         best_val_metrics = eval_metrics
+            #         filename = "checkpoint_best.pth"
+            #         save_checkpoint(
+            #             args.checkpoint_dir,
+            #             model_no_ddp,
+            #             optimizer,
+            #             curr_epoch,
+            #             args,
+            #             best_val_metrics,
+            #             filename="checkpoint_best.pth",
+            #         )
+            #         if is_primary():
+            #             logout(
+            #                 f"Epoch [{curr_epoch}/{args.max_epoch}] "
+            #                 f"saved current best val checkpoint at {filename}; "
+            #                 f"{args.criterion} {eval_metrics[args.criterion]}"
+            #             )
+            # end of an iteration
+        
+          
+        # end of an epoch
+        save_checkpoint(
+            args.checkpoint_dir,
+            model_no_ddp,
+            optimizer,
+            curr_epoch,
+            args,
+            best_val_metrics,
+            filename="checkpoint.pth",
+        )
+    
+    # # end of training
+    # eval_metrics = {}
+    # model.eval()
+    # for test_loader in dataloaders['test']:
+    #     task_metrics = test_loader.dataset.eval_func(
+    #         args,
+    #         curr_epoch,
+    #         model,
+    #         dataset_config,
+    #         test_loader,
+    #         logout,
+    #         curr_train_iter=curr_iter
+    #     )
+    #     eval_metrics.update(task_metrics)
+    return 

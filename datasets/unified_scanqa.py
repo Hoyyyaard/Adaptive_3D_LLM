@@ -138,6 +138,8 @@ class Dataset(ScanNetBaseDataset):
         ## USer
         self.dense_train_info = {}
         self.dense_ret_dicts = {}
+        from src.openscene_dense_pcd_fts_cache import OpenScene_Fts_Cache
+        self.openscene_fts_cache = OpenScene_Fts_Cache()
     
     def _tag_dataset(self, corpus, task_name): 
         for anno in corpus:
@@ -268,7 +270,8 @@ class Dataset(ScanNetBaseDataset):
         # objects_pcd.colors = open3d.utility.Vector3dVector(ret_dict['point_clouds'][:,3:6])
         # open3d.visualization.draw_geometries([objects_pcd])
         
-        
+        if self.args.finetune_flex_opt:
+            ret_dict.update(self.openscene_fts_cache.get_openscene_scan_datas(scan_name))
             
             
         ## USer: below are used for debug
