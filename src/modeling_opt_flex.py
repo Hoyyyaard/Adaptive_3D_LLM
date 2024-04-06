@@ -1,5 +1,5 @@
 from typing import List, Optional, Tuple, Union
-
+import copy
 import torch
 import heapq, time
 from torch import Tensor
@@ -1298,17 +1298,20 @@ class FlexAttention(nn.Module):
             # self_attention
             key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
             value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
+            # key_states = self.k_proj(hidden_states)
+            # value_states = self.v_proj(hidden_states)
             if hr_key_value_states is not None:
-                hr_key_states = self._shape(self.k_hr_proj(hr_key_value_states), -1, bsz)
-                hr_value_states = self._shape(self.v_hr_proj(hr_key_value_states), -1, bsz)
-                key_states = torch.cat([key_states, hr_key_states], dim=2)
-                value_states = torch.cat([value_states, hr_value_states], dim=2)
-                hr_attention_mask = torch.zeros_like(hr_key_value_states[:,:,0], device=hr_value_states.device).unsqueeze(1)
-                column_attention_mask = attention_mask[:,:,:,0].transpose(1, 2)
-                column_attention_mask = torch.cat([column_attention_mask, hr_attention_mask.transpose(1, 2)], dim=1)
-                attention_mask = torch.bmm(attention_mask[:,:,:,0].transpose(1, 2), column_attention_mask.transpose(1, 2)).unsqueeze(1)
-                del hr_attention_mask
-                del column_attention_mask
+                ## hr_key_value_states [bs, text_seq_len, dim]
+                key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
+                value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
+                hr_key_states = self.k_hr_proj(hr_key_value_states)
+                hr_value_states = self.v_hr_proj(hr_key_value_states)
+                # key_states = torch.cat([key_states, hr_key_states], dim=2)
+                # value_states = torch.cat([value_states, hr_value_states], dim=2)
+                # hr_attention_mask = torch.zeros_like(hr_key_value_states[:,:,0], device=hr_value_states.device).unsqueeze(1)
+                # column_attention_mask = attention_mask[:,:,:,0].transpose(1, 2)
+                # column_attention_mask = torch.cat([column_attention_mask, hr_attention_mask.transpose(1, 2)], dim=1)
+                # attention_mask = torch.bmm(attention_mask[:,:,:,0].transpose(1, 2), column_attention_mask.transpose(1, 2)).unsqueeze(1)
             
         if self.is_decoder:
             # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
@@ -1322,19 +1325,19 @@ class FlexAttention(nn.Module):
 
         proj_shape = (bsz * self.num_heads, -1, self.head_dim)
         query_states = self._shape(query_states, tgt_len, bsz).view(*proj_shape)
+        
         key_states = key_states.view(*proj_shape)
         value_states = value_states.view(*proj_shape)
-
+        
         src_len = key_states.size(1)
         attn_weights = torch.bmm(query_states, key_states.transpose(1, 2))
-
+            
         if attn_weights.size() != (bsz * self.num_heads, tgt_len, src_len):
             raise ValueError(
                 f"Attention weights should be of size {(bsz * self.num_heads, tgt_len, src_len)}, but is"
                 f" {attn_weights.size()}"
             )
         
-        ## TODO: check if need causal mask here
         if attention_mask is not None:
             if attention_mask.size() != (bsz, 1, tgt_len, src_len):
                 raise ValueError(
@@ -1346,6 +1349,7 @@ class FlexAttention(nn.Module):
             )
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
 
+        attn_weights_bf_sm = torch.clone(attn_weights)
         # upcast to fp32 if the weights are in fp16. Please see https://github.com/huggingface/transformers/pull/17437
         if attn_weights.dtype == torch.float16:
             attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(torch.float16)
@@ -1361,6 +1365,77 @@ class FlexAttention(nn.Module):
             attn_weights = layer_head_mask.view(1, -1, 1, 1) * attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
 
+        attn_probs = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
+
+        attn_output = torch.bmm(attn_probs, value_states)
+        
+        ## TODO：check inference
+        if hr_key_value_states is not None:        ## [bs, text_seq_len, 4*32, 2048]
+            dense_scene_tokens_num = hr_key_value_states.shape[2]
+            src_len = key_states.size(1) + dense_scene_tokens_num
+            ## 计算dense_scene_tokens的attention
+            for text_query_token_id in range(query_states.shape[1]-self.config.scene_token_num):
+                
+                if not self.training:
+                    text_query_token_id=query_states.shape[1]-self.config.scene_token_num-1
+                
+                query_state_per_token = query_states[:, text_query_token_id+ self.config.scene_token_num, :].unsqueeze(1)
+                attn_weight_per_token = attn_weights[:, text_query_token_id+ self.config.scene_token_num, :].unsqueeze(1)
+                attn_mask_per_token = attention_mask[:, :, text_query_token_id+ self.config.scene_token_num, :].unsqueeze(2)
+                
+                flex_key_state_per_token = self._shape(hr_key_states[:, text_query_token_id, :].unsqueeze(1), -1, bsz).view(*proj_shape)
+                
+                flex_attn_weight_per_token = torch.bmm(query_state_per_token, flex_key_state_per_token.transpose(1,2))
+                flex_attn_mask_per_token = torch.zeros(bsz, 1, 1, dense_scene_tokens_num, device=attn_mask_per_token.device, dtype=attn_mask_per_token.dtype)
+                
+                attn_weight_per_token = torch.cat([attn_weight_per_token, flex_attn_weight_per_token], dim=-1)
+                attn_mask_per_token = torch.cat([attn_mask_per_token, flex_attn_mask_per_token], dim=-1)
+
+                flex_value_states_per_token = self._shape(hr_value_states[:, text_query_token_id, :].unsqueeze(1), -1, bsz).view(*proj_shape)
+                value_states_per_token = torch.cat([value_states, flex_value_states_per_token], dim=1)
+                
+                if attn_weight_per_token.size() != (bsz * self.num_heads, 1, src_len):
+                    raise ValueError(
+                        f"Attention weights should be of size {(bsz * self.num_heads, 1, src_len)}, but is"
+                        f" {attn_weight_per_token.size()}"
+                    )
+            
+                if attn_mask_per_token.size() != (bsz, 1, 1, src_len):
+                    raise ValueError(
+                        f"Attention mask should be of size {(bsz, 1, 1, src_len)}, but is {attn_mask_per_token.size()}"
+                    )
+                attn_weight_per_token = attn_weight_per_token.view(bsz, self.num_heads, 1, src_len) + attn_mask_per_token
+                attn_weight_per_token = torch.max(
+                    attn_weight_per_token, torch.tensor(torch.finfo(attn_weight_per_token.dtype).min, device=attn_weight_per_token.device)
+                )
+                attn_weight_per_token = attn_weight_per_token.view(bsz * self.num_heads, 1, src_len)
+
+                # attn_weights_bf_sm[:, text_query_token_id, :] = attn_weight_per_token[:, :, :key_states.size(1)]
+                # upcast to fp32 if the weights are in fp16. Please see https://github.com/huggingface/transformers/pull/17437
+                if attn_weight_per_token.dtype == torch.float16:
+                    attn_weight_per_token = nn.functional.softmax(attn_weight_per_token, dim=-1, dtype=torch.float32).to(torch.float16)
+                else:
+                    attn_weight_per_token = nn.functional.softmax(attn_weight_per_token, dim=-1)
+
+                if layer_head_mask is not None:
+                    if layer_head_mask.size() != (self.num_heads,):
+                        raise ValueError(
+                            f"Head mask for a single layer should be of size {(self.num_heads,)}, but is"
+                            f" {layer_head_mask.size()}"
+                        )
+                    attn_weight_per_token = layer_head_mask.view(1, -1, 1, 1) * attn_weight_per_token.view(bsz, self.num_heads, 1, src_len)
+                    attn_weight_per_token = attn_weight_per_token.view(bsz * self.num_heads, 1, src_len)
+
+                attn_probs_per_token = nn.functional.dropout(attn_weight_per_token, p=self.dropout, training=self.training)
+
+                attn_output_per_token = torch.bmm(attn_probs_per_token, value_states_per_token)
+                
+                attn_output[:, text_query_token_id, :] = attn_output_per_token.squeeze(1)
+                attn_weights[:, text_query_token_id, :] = attn_weight_per_token[:, :, :key_states.size(1)].squeeze(1)
+                
+                if not self.training:
+                    break
+            
         if output_attentions:
             # this operation is a bit awkward, but it's required to
             # make sure that attn_weights keeps its gradient.
@@ -1370,10 +1445,6 @@ class FlexAttention(nn.Module):
             attn_weights = attn_weights_reshaped.view(bsz * self.num_heads, tgt_len, src_len)
         else:
             attn_weights_reshaped = None
-
-        attn_probs = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
-
-        attn_output = torch.bmm(attn_probs, value_states)
 
         if attn_output.size() != (bsz * self.num_heads, tgt_len, self.head_dim):
             raise ValueError(
@@ -1390,59 +1461,72 @@ class FlexAttention(nn.Module):
 
         attn_output = self.out_proj(attn_output)
         
-        ## TODO：check 输出global attn map，现在的attn_weights是多头的
-        multi_head_attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
+        ## TODO：check 输出global attn map，现在的attn_weights是多头的 使用了平均
+        src_len = key_states.size(1)
+        multi_head_attn_weights = attn_weights_bf_sm.view(bsz, self.num_heads, tgt_len, src_len)
         global_attention_map = torch.mean(multi_head_attn_weights, dim=1)
-        last_sparse_scene_token_hidden_state = global_attention_map[:, :, -1]
-        last_sparse_scene_token_hidden_state = last_sparse_scene_token_hidden_state[:, :512]
-        last_sparse_scene_token_hidden_state = nn.functional.softmax(last_sparse_scene_token_hidden_state, dim=-1)
+        scene_token_hidden_state = global_attention_map[:, self.config.scene_token_num:, :][:, :, :self.config.scene_token_num] * self.config.attn_softmax_scale
+        scene_token_hidden_state = nn.functional.softmax(scene_token_hidden_state, dim=-1)
         
-        return attn_output, attn_weights_reshaped, past_key_value, last_sparse_scene_token_hidden_state
+        
+        return attn_output, attn_weights_reshaped, past_key_value, scene_token_hidden_state
 
 
 from third_party.pointnet2.pointnet2_modules import PointnetSAModuleVotes
+
 from third_party.pointnet2.pointnet2_utils import ball_query, grouping_operation
 class Dense_Region_Selector(nn.Module):
-    def __init__(self, select_threshold=0.5):
+    def __init__(self, config, select_threshold=0.5):
         super().__init__()
         self.select_threshold = select_threshold
-        self.region_radius = 1
-        self.region_nsample = 10000
+        self.region_radius = config.region_radius
+        self.region_nsample = config.region_sample_num
+        self.dense_scene_token_head = nn.Linear(768+3, config.hidden_size)
         ## +3 means concat xyz
-        mlp_dims = [768+3, 2048]
-        self.pcd_tokenizer = PointnetSAModuleVotes(
-            radius=0.02,
-            nsample=16,
-            npoint=128,
-            mlp=mlp_dims,
-            normalize_xyz=True,
-        )
+        # mlp_dims = [768+3, 2048]
+        # self.pcd_tokenizer = PointnetSAModuleVotes(
+        #     radius=config.region_token_sample_radius,
+        #     nsample=config.region_token_sample_num_per_ball,
+        #     npoint=config.region_token_sample_num,
+        #     mlp=mlp_dims,
+        #     normalize_xyz=True,
+        # )
         
-    def forward(self, last_sparse_scene_token_hidden_state, sparse_scene_xyz, dense_scene_xyz, dense_scene_fts, valid_pcd_len):
+    def forward(self, scene_token_hidden_state, dense_region_tokens):
         ## [[bs],[idx]]
         # interest_tokens = torch.where(last_sparse_scene_token_hidden_state > self.select_threshold)
         # if len(interest_tokens[0]) == 0:
-        ## TODO：argmax版本 先不使用阈值
-        max_indices = torch.argmax(last_sparse_scene_token_hidden_state, dim=-1)
-        interest_tokens = [torch.tensor(range(len(max_indices))).to(max_indices.device), max_indices]
-        interest_xyz_idx = {i:[] for i in range(len(last_sparse_scene_token_hidden_state))}
-        for i in range(len(interest_tokens[0])):
-            interest_xyz_idx[interest_tokens[0][i].item()].append(interest_tokens[1][i].item())
-        interest_xyz = [sparse_scene_xyz[k,v,:] for k,v in interest_xyz_idx.items()]
-        interest_xyz = torch.stack(interest_xyz, dim=0)
-        ## 感兴趣xyz的半径圆周范围self.region_radius内选self.region_nsample个点作为这个区域的稠密点云表示
-        idx = ball_query(self.region_radius, self.region_nsample, dense_scene_xyz, interest_xyz).long().squeeze(1)
-        ## 这里要保证idx的最大值小于dense_scene_xyz的长度由于现在的点云都是pad过的
-        for ii, id in enumerate(idx):
-            assert id.max().item() < valid_pcd_len[ii]
-        interest_dense_scene_xyz = torch.stack([dense_scene_xyz[i, idx[i], :] for i in range(len(idx))], dim=0)
-        interest_dense_scene_fts = torch.stack([dense_scene_fts[i, idx[i], :] for i in range(len(idx))], dim=0)
-        interest_dense_scene_fts = torch.cat([interest_dense_scene_fts, interest_dense_scene_xyz], dim=-1).transpose(1, 2).contiguous()
-        ## 选择一定点聚合周围特征作为区域的表示
-        pre_enc_xyz, pre_enc_features, pre_enc_inds = self.pcd_tokenizer(interest_dense_scene_xyz, interest_dense_scene_fts)
-        return pre_enc_features.transpose(1, 2).contiguous()
+        ## 选4个版本
+        k = 4
+        top_values, top_indices = torch.topk(scene_token_hidden_state, k, dim=-1)
+        batch_select_dense_region_tokens = []
+        for bs in range(len(top_indices)):
+            select_dense_region_tokens = torch.stack([dense_region_tokens[bs, text_token_i, :, :].view(-1, 771) for text_token_i in top_indices[bs]],dim=0)
+            batch_select_dense_region_tokens.append(select_dense_region_tokens)
+        batch_select_dense_region_tokens = torch.stack(batch_select_dense_region_tokens, dim=0)
+        batch_select_dense_region_tokens = self.dense_scene_token_head(batch_select_dense_region_tokens)
+        return batch_select_dense_region_tokens
 
-        
+        ## argmax版本 
+        # max_indices = torch.argmax(last_sparse_scene_token_hidden_state, dim=-1)
+        # interest_tokens = [torch.tensor(range(len(max_indices))).to(max_indices.device), max_indices]
+        # interest_xyz_idx = {i:[] for i in range(len(last_sparse_scene_token_hidden_state))}
+        # for i in range(len(interest_tokens[0])):
+        #     interest_xyz_idx[interest_tokens[0][i].item()].append(interest_tokens[1][i].item())
+        # interest_xyz = [sparse_scene_xyz[k,v,:] for k,v in interest_xyz_idx.items()]
+        # interest_xyz = torch.stack(interest_xyz, dim=0)
+        # ## 感兴趣xyz的半径圆周范围self.region_radius内选self.region_nsample个点作为这个区域的稠密点云表示
+        # idx = ball_query(self.region_radius, self.region_nsample, dense_scene_xyz, interest_xyz).long().squeeze(1)
+        # ## 这里要保证idx的最大值小于dense_scene_xyz的长度由于现在的点云都是pad过的
+        # for ii, id in enumerate(idx):
+        #     assert id.max().item() < valid_pcd_len[ii]
+        # interest_dense_scene_xyz = torch.stack([dense_scene_xyz[i, idx[i], :] for i in range(len(idx))], dim=0)
+        # interest_dense_scene_fts = torch.stack([dense_scene_fts[i, idx[i], :] for i in range(len(idx))], dim=0)
+        # interest_dense_scene_fts = torch.cat([interest_dense_scene_fts, interest_dense_scene_xyz], dim=-1).transpose(1, 2).contiguous()
+        # ## 选择一定点聚合周围特征作为区域的表示
+        # pre_enc_xyz, pre_enc_features, pre_enc_inds = self.pcd_tokenizer(interest_dense_scene_xyz, interest_dense_scene_fts)
+        # return pre_enc_features.transpose(1, 2).contiguous()
+
         
 class FlexOPTDecoderLayer(OPTDecoderLayer):
     def __init__(self, config: OPTConfig):
@@ -1462,7 +1546,7 @@ class FlexOPTDecoderLayer(OPTDecoderLayer):
         self.fc2 = nn.Linear(config.ffn_dim, self.embed_dim, bias=config.enable_bias)
         self.final_layer_norm = nn.LayerNorm(self.embed_dim, elementwise_affine=config.layer_norm_elementwise_affine)
 
-        self.dense_region_selector = Dense_Region_Selector()
+        self.dense_region_selector = Dense_Region_Selector(config)
         
     def forward(
         self,
@@ -1499,7 +1583,7 @@ class FlexOPTDecoderLayer(OPTDecoderLayer):
 
         # Self Attention
         ## Donot need attn mask as need to compute visual token how importance to text token
-        hidden_states, self_attn_weights, present_key_value, last_sparse_scene_token_hidden_state = self.self_attn(
+        hidden_states, self_attn_weights, present_key_value, scene_token_hidden_state = self.self_attn(
             hidden_states=hidden_states,
             past_key_value=past_key_value,
             attention_mask=attention_mask,
@@ -1543,8 +1627,7 @@ class FlexOPTDecoderLayer(OPTDecoderLayer):
         if use_cache:
             outputs += (present_key_value,)
             
-        ## TODO：drop HR tokens & Select HR tokens
-        hr_key_value_states = self.dense_region_selector(last_sparse_scene_token_hidden_state, dense_pcd_info['sparse_scene_xyz'], dense_pcd_info['dense_scene_xyz'], dense_pcd_info['dense_scene_fts'], dense_pcd_info['valid_pcd_len'])
+        hr_key_value_states = self.dense_region_selector(scene_token_hidden_state, dense_pcd_info['dense_region_tokens'])
 
         return outputs, hr_key_value_states
     
@@ -1588,9 +1671,13 @@ class FlexOPTDecoder(OPTDecoder):
         else:
             self.final_layer_norm = None
 
-        self.layers = nn.ModuleList([OPTDecoderLayer(config) for _ in range(8)])
-        ## TODO：Add flex attn layer & Modify num_hidden_layers
-        self.flex_layers = nn.ModuleList([FlexOPTDecoderLayer(config) for _ in range(config.num_hidden_layers-8)])
+        if config.use_flex_layer:
+            self.layers = nn.ModuleList([OPTDecoderLayer(config) for _ in range(config.num_hidden_layers)])
+            self.flex_layers = nn.ModuleList([FlexOPTDecoderLayer(config) for _ in range(config.num_flex_hidden_layers)])
+        else:
+            print("warning!!! do not use flex layer")
+            self.layers = nn.ModuleList([OPTDecoderLayer(config) for _ in range(config.num_hidden_layers+config.num_flex_hidden_layers)])
+            self.flex_layers = []
         
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
 
@@ -1775,18 +1862,8 @@ class FlexOPTDecoder(OPTDecoder):
 
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
-
-        ## TODO: check here
-        ## Flex attn here
-        flex_attention_mask = attention_mask
-        flex_attention_mask[flex_attention_mask == 0] = torch.finfo(flex_attention_mask.dtype).min
-        flex_attention_mask[flex_attention_mask == 1] = 0
-        flex_attention_mask.unsqueeze_(-1)
-        flex_attention_mask = torch.bmm(flex_attention_mask, flex_attention_mask.transpose(1,2)).unsqueeze(1)
-        flex_attention_mask[torch.isinf(flex_attention_mask)] = torch.finfo(flex_attention_mask.dtype).min
-        hr_key_value_states = None
-        del attention_mask
         
+        hr_key_value_states = None
         for idx, decoder_layer in enumerate(self.flex_layers):
             torch.cuda.empty_cache()
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
@@ -1804,7 +1881,7 @@ class FlexOPTDecoder(OPTDecoder):
                 layer_outputs = self._gradient_checkpointing_func(
                     decoder_layer.__call__,
                     hidden_states,
-                    flex_attention_mask,
+                    causal_attention_mask,
                     head_mask[idx] if head_mask is not None else None,
                     None,
                     output_attentions,
@@ -1813,10 +1890,9 @@ class FlexOPTDecoder(OPTDecoder):
                     dense_pcd_info
                 )
             else:
-                ## TODO：是否要causal的attention mask？
                 layer_outputs = decoder_layer(
                     hidden_states,
-                    attention_mask=flex_attention_mask,
+                    attention_mask=causal_attention_mask,
                     layer_head_mask=(head_mask[idx] if head_mask is not None else None),
                     past_key_value=past_key_value,
                     output_attentions=output_attentions,
@@ -1898,7 +1974,6 @@ class PromptEncoder(nn.Module):
 
 class FlexOPTForCausalLM(OPTForCausalLM):
     _tied_weights_keys = ["lm_head.weight"]
-    ## TODO：加载模型权重
     def __init__(self, config):
         super().__init__(config)
         self.model = FlexOPTModel(config)
@@ -1907,17 +1982,17 @@ class FlexOPTForCausalLM(OPTForCausalLM):
 
         # the lm_head weight is automatically tied to the embed tokens weight
         self.lm_head = nn.Linear(config.word_embed_proj_dim, config.vocab_size, bias=False)
-        
-        from third_party.pointnet2.pointnet2_modules import PointnetSAModuleVotes
+        self.scene_token_in_head = nn.Linear(768+3, config.hidden_size, bias=False)
+        # from third_party.pointnet2.pointnet2_modules import PointnetSAModuleVotes
         ## +3 means concat xyz
-        mlp_dims = [768+3, 2048]
-        self.pcd_tokenizer = PointnetSAModuleVotes(
-            radius=0.2,
-            nsample=64,
-            npoint=512,
-            mlp=mlp_dims,
-            normalize_xyz=True,
-        )
+        # mlp_dims = [768+3, 2048]
+        # self.pcd_tokenizer = PointnetSAModuleVotes(
+        #     radius=config.scene_token_sample_radius,
+        #     nsample=config.scene_token_sample_num_per_ball,
+        #     npoint=config.scene_token_num,
+        #     mlp=mlp_dims,
+        #     normalize_xyz=True,
+        # )
         # Initialize weights and apply final processing
         self.post_init()
         
@@ -2022,15 +2097,16 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         else:
             input_ids = batch_data_label['input_ids']
             attention_mask = batch_data_label['attention_mask']
+            gradient_mask = batch_data_label['gradient_mask']
+            
         inputs_embeds = self.model.decoder.embed_tokens(input_ids)
         ## get sparse scene object tokens from openscene_sparse_fts by set abstract layer here
-        ### concat xyz with fts
-        features = batch_data_label['openscene_sparse_fts']
-        features = torch.cat([features, batch_data_label['openscene_sparse_pcd']], dim=-1)
-        features = features.transpose(1, 2).contiguous()
-        xyz = batch_data_label['openscene_sparse_pcd']
-        pre_enc_xyz, pre_enc_features, pre_enc_inds = self.pcd_tokenizer(xyz, features)
-        pre_enc_features = pre_enc_features.transpose(1, 2).contiguous()
+        pre_enc_features = self.scene_token_in_head(batch_data_label['scene_tokens'])
+        # features = batch_data_label['openscene_sparse_fts']
+        # features = features.transpose(1, 2).contiguous()
+        # xyz = batch_data_label['openscene_sparse_pcd']
+        # pre_enc_xyz, pre_enc_features, pre_enc_inds = self.pcd_tokenizer(xyz, features)
+        # pre_enc_features = pre_enc_features.transpose(1, 2).contiguous()
         pre_enc_features_mask = torch.ones_like(pre_enc_features[..., 0])
         
         if batch_data_label['click_mask'][0, 0].item() == 1:
@@ -2073,14 +2149,17 @@ class FlexOPTForCausalLM(OPTForCausalLM):
             for batch_id in range(inputs_embeds.shape[0]):
             
                 caption_config['inputs_embeds'] = inputs_embeds[batch_id].unsqueeze(0)
-                
+                caption_config['attention_mask'] = attention_mask[batch_id].unsqueeze(0)
                 caption_config['dense_pcd_info']={
-                        'sparse_scene_xyz':pre_enc_xyz[batch_id].unsqueeze(0),
-                        'dense_scene_fts':batch_data_label['openscene_dense_fts'][batch_id].unsqueeze(0),
-                        'pre_enc_inds':pre_enc_inds[batch_id].unsqueeze(0),
-                        'dense_scene_xyz':batch_data_label['openscene_dense_pcd'][batch_id].unsqueeze(0),
-                        'valid_pcd_len': batch_data_label['valid_pcd_len'][batch_id].unsqueeze(0)
-                    }
+                    'dense_region_tokens':batch_data_label['dense_region_tokens'][batch_id].unsqueeze(0),
+                }
+                # caption_config['dense_pcd_info']={
+                #         'sparse_scene_xyz':pre_enc_xyz[batch_id].unsqueeze(0),
+                #         'dense_scene_fts':batch_data_label['openscene_dense_fts'][batch_id].unsqueeze(0),
+                #         'pre_enc_inds':pre_enc_inds[batch_id].unsqueeze(0),
+                #         'dense_scene_xyz':batch_data_label['openscene_dense_pcd'][batch_id].unsqueeze(0),
+                #         'valid_pcd_len': batch_data_label['valid_pcd_len'][batch_id].unsqueeze(0)
+                #     }
                 output = beam_search_decode(self.model.decoder, **caption_config)
                 output_ids.append(output['output_ids'])
         
@@ -2099,28 +2178,33 @@ class FlexOPTForCausalLM(OPTForCausalLM):
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
                 dense_pcd_info={
-                    'sparse_scene_xyz':pre_enc_xyz,
-                    'dense_scene_fts':batch_data_label['openscene_dense_fts'],
-                    'pre_enc_inds':pre_enc_inds,
-                    'dense_scene_xyz':batch_data_label['openscene_dense_pcd'],
-                    'valid_pcd_len': batch_data_label['valid_pcd_len']
+                    'dense_region_tokens':batch_data_label['dense_region_tokens'],
                 }
+                # dense_pcd_info={
+                #     'sparse_scene_xyz':pre_enc_xyz,
+                #     'dense_scene_fts':batch_data_label['openscene_dense_fts'],
+                #     'pre_enc_inds':pre_enc_inds,
+                #     'dense_scene_xyz':batch_data_label['openscene_dense_pcd'],
+                #     'valid_pcd_len': batch_data_label['valid_pcd_len']
+                # }
             )
 
-            logits = self.lm_head(outputs[0]).contiguous()
+            logits = self.lm_head(outputs[0])
             labels = batch_data_label['input_ids']
-            logits = logits[:, prefix_len-1:, :].contiguous()
+            logits = logits[:, prefix_len-1:-1, :]
+            assert gradient_mask.shape[1] == logits.shape[1]
             loss = None
             if labels is not None:
                 # move labels to correct device to enable model parallelism
                 labels = labels.to(logits.device)
                 # Shift so that tokens < n predict n
-                shift_logits = logits[..., :-1, :].contiguous()
+                shift_logits = logits.contiguous()
                 shift_labels = labels.contiguous()
                 # Flatten the tokens
-                loss_fct = CrossEntropyLoss()
+                loss_fct = CrossEntropyLoss(reduction='none')
                 loss = loss_fct(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
-
+                gradient_mask = gradient_mask.view(-1)
+                loss = torch.sum(loss * gradient_mask) / torch.sum(gradient_mask + 1e-6)
             if not return_dict:
                 output = (logits,) + outputs[1:]
                 return (loss,) + output if loss is not None else output
@@ -2132,15 +2216,171 @@ class FlexOPTForCausalLM(OPTForCausalLM):
                 hidden_states=outputs.hidden_states,
                 attentions=outputs.attentions,
             )
+
+
+    def forward_preprocess_scene_token(
+        self,
+        batch_data_label,
+        head_mask: Optional[torch.Tensor] = None,
+        past_key_values: Optional[List[torch.FloatTensor]] = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        labels: Optional[torch.LongTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Union[Tuple, CausalLMOutputWithPast]:
+
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         
+        import os
+        self.scan_name_list = os.listdir('/mnt/nfs/share/Adaptive/openscene_scene_tokens')
+        scan_name = batch_data_label['scan_name'][0]
+        ot_dir = f'/mnt/nfs/share/Adaptive/openscene_scene_tokens/{scan_name}'
+        if not os.path.exists(ot_dir):
+            os.makedirs(ot_dir, exist_ok=True)
+        from third_party.pointnet2.pointnet2_modules import  PointnetSAModuleVotes_WoMlp
+        from third_party.pointnet2.pointnet2_utils import ball_query
+        from tqdm import tqdm
+        
+        
+        if scan_name not in self.scan_name_list:
+            self.scan_name_list.append(scan_name)
+        else:
+            return 
+        
+        scene_tokenizer = PointnetSAModuleVotes_WoMlp(
+            radius=self.config.scene_token_sample_radius,
+            nsample=self.config.scene_token_sample_num_per_ball,
+            npoint=self.config.scene_token_num,
+            normalize_xyz=True,
+        )
+        region_tokenizer = PointnetSAModuleVotes_WoMlp(
+            radius=self.config.region_token_sample_radius,
+            nsample=self.config.region_token_sample_num_per_ball,
+            npoint=self.config.region_token_sample_num,
+            normalize_xyz=True,
+        )
+        region_radius = self.config.region_radius
+        region_nsample = self.config.region_sample_num
+        
+
+        ## concat xyz with fts
+        features = batch_data_label['openscene_sparse_fts']
+        dense_scene_xyz = batch_data_label['openscene_dense_pcd']
+        dense_scene_fts = batch_data_label['openscene_dense_fts']
+        
+        ## get sparse scene object tokens from openscene_sparse_fts by set abstract layer here
+        features = features.transpose(1, 2).contiguous()
+        xyz = batch_data_label['openscene_sparse_pcd']
+        pre_enc_xyz, pre_enc_features, pre_enc_inds = scene_tokenizer(xyz, features)
+        pre_enc_features = pre_enc_features.transpose(1, 2).contiguous()
+        
+        torch.save(pre_enc_inds, f'{ot_dir}/enc_inds.pt')
+        torch.save(pre_enc_xyz, f'{ot_dir}/enc_xyz.pt')
+        torch.save(pre_enc_features, f'{ot_dir}/enc_features.pt')
+        
+        
+        ## visualization
+        import open3d
+        import numpy as np
+        # sparse_vis_pcd = open3d.geometry.PointCloud()
+        # sparse_vis_pcd.points = open3d.utility.Vector3dVector(xyz[0].cpu().numpy())
+        # colors = np.ones_like(xyz[0].cpu().numpy()) * 0.8
+        # colors[pre_enc_inds[0].cpu().numpy()] = [1., 0., 0.]
+        # sparse_vis_pcd.colors = open3d.utility.Vector3dVector(colors)
+        # open3d.visualization.draw_geometries([sparse_vis_pcd])
+        
+        for ri, r_xyz in tqdm(enumerate(pre_enc_xyz.squeeze(0))):
+            idx = ball_query(region_radius, region_nsample, dense_scene_xyz, r_xyz.unsqueeze(0).unsqueeze(0)).long()
+            unique_cnt = torch.zeros((idx.shape[0], idx.shape[1]))
+            for i_batch in range(idx.shape[0]):
+                for i_region in range(idx.shape[1]):
+                    unique_ind = torch.unique(idx[i_batch, i_region, :])
+                    num_unique = unique_ind.shape[0]
+                    unique_cnt[i_batch, i_region] = num_unique
+                    sample_ind = torch.randint(0, num_unique, (region_nsample - num_unique,), dtype=torch.long)
+                    all_ind = torch.cat((unique_ind, unique_ind[sample_ind]))
+                    idx[i_batch, i_region, :] = all_ind
+            idx.squeeze_(1)
+            
+            interest_dense_scene_xyz = torch.stack([dense_scene_xyz[i, idx[i], :] for i in range(len(idx))], dim=0)
+            interest_dense_scene_fts = torch.stack([dense_scene_fts[i, idx[i], :] for i in range(len(idx))], dim=0)
+            interest_dense_scene_fts = interest_dense_scene_fts.transpose(1, 2).contiguous()
+            pre_reg_xyz, pre_reg_features, pre_reg_inds = region_tokenizer(interest_dense_scene_xyz, interest_dense_scene_fts)
+            
+            torch.save(pre_reg_inds, f'{ot_dir}/region_inds_{ri}.pt')
+            torch.save(pre_reg_xyz, f'{ot_dir}/region_xyz_{ri}.pt')
+            torch.save(pre_reg_features.transpose(1,2), f'{ot_dir}/region_features_{ri}.pt')
+            
+            # dense_vis_pcd = open3d.geometry.PointCloud()
+            # dense_vis_pcd.points = open3d.utility.Vector3dVector(dense_scene_xyz[0].cpu().numpy())
+            # colors = np.ones_like(dense_scene_xyz[0].cpu().numpy()) * 0.8
+            # # dense_vis_pcd.colors = open3d.utility.Vector3dVector(colors)
+            # select_vis_pcd = open3d.geometry.PointCloud()
+            # select_vis_pcd.points = open3d.utility.Vector3dVector(interest_dense_scene_xyz[0].cpu().numpy())
+            # colors = np.ones_like(interest_dense_scene_xyz[0].cpu().numpy()) * 0.3
+            # colors[pre_reg_inds[0].cpu().numpy()] = [1., 0., 0.]
+            # select_vis_pcd.colors = open3d.utility.Vector3dVector(colors)
+            # open3d.visualization.draw_geometries([dense_vis_pcd, select_vis_pcd])
+            # open3d.visualization.draw_geometries([select_vis_pcd])
+            pass
+
+@torch.no_grad()
+def greedy_decode(transformer: Callable, **kwargs) -> Tensor:
+    
+    ## prepare inputs
+    max_length = kwargs['max_length']
+    attention_mask = kwargs['attention_mask']
+    inputs_embeds = kwargs['inputs_embeds'][attention_mask == 1].unsqueeze(0) # batch x nwords x channel
+    dense_pcd_info = kwargs['dense_pcd_info']
+    lm_head = kwargs['lm_head']
+    
+    
+    batch, _, channel = inputs_embeds.shape
+    
+    ## prepare storage
+    output_ids = torch.ones(batch, max_length).long().to(inputs_embeds.device)
+    output_ids = output_ids * kwargs['eos_token_id']
+    
+    ## prepare temporal storage of inputs
+    temporal_inputs = inputs_embeds
+    finished_batchs = torch.zeros(batch).bool().to(inputs_embeds.device)
+    embedding_layer = transformer.get_input_embeddings()
+    for word_id in range(max_length):
+        
+        step_output = transformer(
+            inputs_embeds=temporal_inputs,
+            dense_pcd_info=dense_pcd_info
+        )
+        
+        logits = lm_head(step_output[0]).contiguous()
+        ## greedy decoding, find out whats the most possible word
+        next_word_id = logits[:, -1, :].argmax(-1)
+        
+        # check those finished sentences and overwrite
+        finished_batchs |= (next_word_id == kwargs['eos_token_id'])
+        next_word_id[finished_batchs] = kwargs['eos_token_id']
+        
+        output_ids[:, word_id] = next_word_id.long()    # (batch, )
+        
+        temporal_inputs = torch.cat((inputs_embeds, embedding_layer(output_ids[:, :word_id+1])), dim=1)
+        
+    return OrderedDict({'output_ids': output_ids.long()})
+    
+    
 @torch.no_grad()
 def beam_search_decode(transformer: Callable, **kwargs) -> Tensor:
     ## prepare inputs
     max_length = kwargs['max_length']
-    inputs_embeds = kwargs['inputs_embeds'] # batch x nwords x channel
+    attention_mask = kwargs['attention_mask']
+    inputs_embeds = kwargs['inputs_embeds'][attention_mask == 1].unsqueeze(0) # batch x nwords x channel
     dense_pcd_info = kwargs['dense_pcd_info']
     lm_head = kwargs['lm_head']
-    
     # for safety issues
     assert kwargs['num_beams'] is not None, (
         'num_beams should not be provided if calling beam search!'
@@ -2150,7 +2390,7 @@ def beam_search_decode(transformer: Callable, **kwargs) -> Tensor:
     batch, prefix_length, channel = inputs_embeds.shape
     # batch x nbeams x length x channel
     expanded_inputs_embeds = inputs_embeds.unsqueeze(1).repeat(1, nbeams, 1, 1)
-    expanded_dense_pcd_info = {k:v.repeat(nbeams, 1, 1) for k,v in dense_pcd_info.items()}
+    expanded_dense_pcd_info = {k:v.repeat(nbeams, 1, 1, 1) for k,v in dense_pcd_info.items()}
     ## prepare storage
     output_scores = torch.zeros(batch, nbeams).to(inputs_embeds.device)
     output_ids = torch.ones(batch, nbeams, max_length).to(inputs_embeds.device)

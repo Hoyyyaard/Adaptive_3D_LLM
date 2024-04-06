@@ -295,8 +295,9 @@ class Dataset(ScanNetBaseDataset):
         ret_dict['qformer_attention_mask'] = qformer_inputs['attention_mask'][0].astype(np.float32)
         
         if self.args.finetune_flex_opt:
-            ret_dict.update(self.openscene_fts_cache.get_openscene_scan_datas(scan_name))
-        
+            ret_dict.update(self.openscene_fts_cache.get_openscene_scan_datas(scan_name,preprocess=self.args.token_preprocess))
+            ret_dict['scan_name'] = scan_name
+            
         return ret_dict
    
    

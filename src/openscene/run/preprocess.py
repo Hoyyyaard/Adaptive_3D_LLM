@@ -289,9 +289,10 @@ def evaluate(model, val_data_loader, labelset_name='scannet_3d'):
                     predictions = model(sinput)
                     predictions = predictions[inds_reverse, :]
                     
-                    op_dir = f'/home/admin/Projects/LL3DA/results/process_datasets/openscene_dense_fts_distill'
+                    op_dir = f'/mnt/nfs/share/Adaptive/openscene_dense_fts_distill'
                     torch.save(predictions, f'{op_dir}/{scan_name[0]}_dense_fts.pt')
                     torch.save(locs_in, f'{op_dir}/{scan_name[0]}_xyz.pt')
+                    torch.save(feat, f'{op_dir}/{scan_name[0]}_color.pt')
                     
                     continue
                 

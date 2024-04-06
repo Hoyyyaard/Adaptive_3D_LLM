@@ -8,7 +8,7 @@ from engine import do_train, do_preprocess, do_flex_opt_finetune
 from models.model_general import CaptionNet
 from datasets.scannet_base_dataset import DatasetConfig
 from torch.multiprocessing import set_start_method
-
+from transformers import AutoConfig
 from utils.io import resume_if_possible
 from utils.misc import my_worker_init_fn
 from utils.dist import init_distributed, is_distributed, is_primary, get_rank, barrier
@@ -130,6 +130,7 @@ def make_args_parser():
     parser.add_argument("--no_sample_prob", action='store_true')
     
     parser.add_argument("--finetune_flex_opt", action='store_true')
+    parser.add_argument("--token_preprocess", action='store_true')
     
     args = parser.parse_args()
     args.use_height = not args.no_height
@@ -147,6 +148,7 @@ def make_args_parser():
     print(f'no_sample_prob: {args.no_sample_prob}')
     print('============== fintune flex opt =====================')
     print(f'finetune_flex_opt: ', args.finetune_flex_opt)
+    print(f'token_preprocess: ', args.token_preprocess)
     
     return args
 
@@ -393,18 +395,24 @@ def finetune_flex_opt_main(local_rank, args):
     ### build datasets and dataloaders
     dataset_config, datasets, dataloaders = build_dataset(args)
     from src.modeling_opt_flex import FlexOPTForCausalLM
-    model = FlexOPTForCausalLM.from_pretrained('ckpts/opt-model')
+    config = AutoConfig.from_pretrained('src/flex_opt_config.json')
+    model = FlexOPTForCausalLM.from_pretrained('ckpts/opt-model', config=config)
     
     # testing phase
     if args.test_only:
 
         # try:
         checkpoint = torch.load(args.test_ckpt, map_location=torch.device("cpu"))
-        model.load_state_dict(checkpoint, strict=False)
+        if args.test_ckpt == 'ckpts/opt-model/pytorch_model.bin':
+            msg = model.load_state_dict(checkpoint, strict=False)
+        else:
+            msg = model.load_state_dict(checkpoint['model'], strict=True)
         # except:
         #     print('test the model from scratch...')
+        print(msg)
+    
         
-        model_no_ddp = model.cuda()
+        # model_no_ddp = model.cuda()
         model = model.cuda(local_rank)
         
         if is_distributed():
@@ -413,14 +421,15 @@ def finetune_flex_opt_main(local_rank, args):
                 model, device_ids=[local_rank]
             )
         
-        for test_loader in dataloaders['test']:
-            test_loader.dataset.eval_func(
-                args,
-                -1,
-                model,
-                dataset_config,
-                test_loader
-            )
+        with torch.no_grad():
+            for test_loader in dataloaders['test']:
+                test_loader.dataset.eval_func(
+                    args,
+                    -1,
+                    model,
+                    dataset_config,
+                    test_loader
+                )
         
     # training phase
     else:
@@ -433,20 +442,21 @@ def finetune_flex_opt_main(local_rank, args):
         ### whether or not use pretrained weights
         if args.pretrained_weights is not None:
             checkpoint = torch.load(args.pretrained_weights, map_location="cpu")
-            model.load_state_dict(checkpoint, strict=False)
+            msg = model.load_state_dict(checkpoint, strict=False)
             
-            print('====                                          ====')
-            print('==== loading following pre-trained parameters ====')
-            print('====                                          ====')
-            for name, param in checkpoint.items():
-                print('\t', name, param.shape)
-        
+            # print('====                                          ====')
+            # print('==== loading following pre-trained parameters ====')
+            # print('====                                          ====')
+            # for name, param in checkpoint.items():
+            #     print('\t', name, param.shape)
+            print(msg)
+            
         model_no_ddp = model.cuda()
         model = model.cuda(local_rank)
         if is_distributed():
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
             model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=[local_rank], find_unused_parameters=True
+                model, device_ids=[local_rank] , find_unused_parameters=True
             )
             
         if args.optimizer == 'AdamW':

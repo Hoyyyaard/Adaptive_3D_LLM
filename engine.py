@@ -1,4 +1,4 @@
-import os, sys, time, math, json, importlib
+import os, sys, time, math, json
 import torch
 import datetime
 from collections import defaultdict, OrderedDict
@@ -423,7 +423,7 @@ def do_flex_opt_finetune(
     
     if is_primary():
         logout(f"call with args: {args}")
-        logout(f"{model}")
+        logout(f"{model_no_ddp.config}")
     
     curr_iter = args.start_epoch * len(dataloaders['train'])
     max_iters = args.max_epoch * len(dataloaders['train'])
@@ -454,12 +454,18 @@ def do_flex_opt_finetune(
             curr_iter = curr_epoch * len(dataloaders['train']) + batch_idx
             curr_lr = adjust_learning_rate(args, optimizer, curr_iter / max_iters)
             for key in batch_data_label:
-                batch_data_label[key] = batch_data_label[key].to(net_device)
+                if not isinstance(batch_data_label[key], list):
+                    batch_data_label[key] = batch_data_label[key].to(net_device)
+                else:
+                    batch_data_label[key] = batch_data_label[key]
     
             # Forward pass
             optimizer.zero_grad()
-    
-            outputs = model(batch_data_label)
+            if args.token_preprocess:
+                model_no_ddp.forward_preprocess_scene_token(batch_data_label)
+                continue
+            else:
+                outputs = model(batch_data_label)
             loss = outputs['loss']
             loss = all_reduce_average(loss)
             
