@@ -1,5 +1,5 @@
 export PYTHONWARNINGS='ignore:semaphore_tracker:UserWarning'
-export CUDA_VISIBLE_DEVICES=1,2,3,0
+export CUDA_VISIBLE_DEVICES=1,2,3,0,5,6,4
 export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export OMP_NUM_THREADS=1
@@ -19,5 +19,5 @@ python main.py \
     --finetune_flex_opt \
     --dist_url tcp://localhost:12245 \
     --save_every 2000 \
-    --batchsize_per_gpu 2 --ngpus 4 --base_lr 1e-4 --final_lr 1e-6 \
+    --batchsize_per_gpu 2 --ngpus 7 --base_lr 1e-4 --final_lr 1e-6 \
     --cache_dir results/debug \

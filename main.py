@@ -3,6 +3,7 @@ import numpy as np
 import torch
 
 from collections import OrderedDict
+import copy
 
 from engine import do_train, do_preprocess, do_flex_opt_finetune
 from models.model_general import CaptionNet
@@ -442,6 +443,22 @@ def finetune_flex_opt_main(local_rank, args):
         ### whether or not use pretrained weights
         if args.pretrained_weights is not None:
             checkpoint = torch.load(args.pretrained_weights, map_location="cpu")
+            ## 记载官方模型时：使用原来的self attn的参数初始化flex attn的参数 这里需要改网络名字
+            if args.pretrained_weights.split('/')[-1] == 'pytorch_model.bin':
+                replace_keys = [f'model.decoder.layers.{li+config.num_hidden_layers}' for li in range(config.num_flex_hidden_layers)]
+                flex_checkpoint = copy.deepcopy(checkpoint)
+                for k,v in checkpoint.items():
+                    find_key = None
+                    for rk in replace_keys:
+                        if k.find(rk) != -1:
+                            find_key = rk
+                            break
+                    if not find_key is None:
+                        layer_idx = int(find_key.split('.')[-1])-config.num_hidden_layers
+                        flex_checkpoint[k.replace(find_key, f'model.decoder.flex_layers.{layer_idx}')] = v
+                        flex_checkpoint.pop(k)
+                checkpoint = flex_checkpoint
+  
             msg = model.load_state_dict(checkpoint, strict=False)
             
             # print('====                                          ====')

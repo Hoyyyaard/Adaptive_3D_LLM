@@ -302,7 +302,7 @@
             ],
             "env": {
                 "PYTHONWARNINGS":"ignore:semaphore_tracker:UserWarning",
-                "CUDA_VISIBLE_DEVICES":"0",
+                "CUDA_VISIBLE_DEVICES":"7",
                 "MKL_NUM_THREADS":"1",
                 "NUMEXPR_NUM_THREADS":"1",
                 "OMP_NUM_THREADS":"1",
@@ -357,7 +357,7 @@
                 "--detector", "detector_Vote2Cap_DETR",
                 "--captioner", "ll3da",
                 "--checkpoint_dir", "results",
-                "--test_ckpt", "ckpts/opt-1.3b/flex/test/checkpoint.pth",
+                "--test_ckpt", "ckpts/opt-1.3b/flex/test1/checkpoint_4k.pth",
                 "--dataset", "unified_scanqa",
                 "--vocab", "facebook/opt-1.3b",
                 "--qformer_vocab", "bert-base-embedding",
@@ -373,7 +373,7 @@
             ],
             "env": {
                 "PYTHONWARNINGS":"ignore:semaphore_tracker:UserWarning",
-                "CUDA_VISIBLE_DEVICES":"0,1,2,3,4,5,6,7",
+                "CUDA_VISIBLE_DEVICES":"7",
                 "MKL_NUM_THREADS":"1",
                 "NUMEXPR_NUM_THREADS":"1",
                 "OMP_NUM_THREADS":"1",
