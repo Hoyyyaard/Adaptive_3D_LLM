@@ -1,15 +1,19 @@
 import os, json
 import torch
+import sys
+sys.path.append('/home/admin/Projects/LL3DA/')
 import numpy as np
 import random
 from copy import deepcopy
 from typing import Dict, List
 from datasets.scannet_base_dataset import BASE, DatasetConfig, ScanNetBaseDataset
 from transformers import AutoTokenizer
-from eval_utils.evaluate_dialogue import evaluate
+from eval_utils.evaluate_qa import evaluate
 from datasets.task_prompts import TASK_PROPMT, BOX_FORMAT
+from tqdm import tqdm
+import utils.pc_util as pc_util
+import open3d
 
-    
 class Dataset(ScanNetBaseDataset):
     
     def __init__(
@@ -24,6 +28,7 @@ class Dataset(ScanNetBaseDataset):
         use_height=False,
         augment=False,
     ):
+        # split_set="val"
         super().__init__(
             args,
             dataset_config,
@@ -37,8 +42,10 @@ class Dataset(ScanNetBaseDataset):
             use_random_cuboid=False,
             random_cuboid_min_points=None,
         )
+        
         self.args = args
-        self.task_name = '3dllm-embodied-planning'
+        
+        self.task_name = 'scanqa'
         self.grid_size_3d = args.grid_size_3d
         self.max_prompts = args.max_prompts
         self.split = split_set
@@ -57,19 +64,12 @@ class Dataset(ScanNetBaseDataset):
         ## load annotations
         assert split_set in ["train", "val"]
         
-        annotation_file = os.path.join(BASE, 'data', '3D_LLM', f'3d_llm_embodied_planning_filtered_{split_set}.json')
-        self.annotations = json.load(open(annotation_file, 'r'))
-        self._tag_dataset(self.annotations, 'chat')
         
-        ## super configuration
-        self.tokenizer_config = dict(
-            max_length=self.max_des_len, 
-            padding='max_length', 
-            truncation='longest_first', 
-            return_tensors='np'
-        )
-        print(f"kept {len(self.annotations)} annotations in {len(self.scan_names)} scans...")
-
+        self.annotations = os.listdir('tmp/scannet/scans')
+        print(self.annotations)
+        
+        # self._tag_dataset(self.annotations, 'qa')
+        
         from src.openscene_dense_pcd_fts_cache import OpenScene_Fts_Cache
         self.openscene_fts_cache = OpenScene_Fts_Cache()
     
@@ -92,55 +92,15 @@ class Dataset(ScanNetBaseDataset):
 
     def __getitem__(self, idx):
         
-        scan_name = self.annotations[idx]['scene_id']
-        task_name = self.annotations[idx]['task_name']
-        
-        # load question and answer
-        question = self.annotations[idx]['question'].lower()
-        answer = random.choice(self.annotations[idx]['answers'])
-        
-        ret_dict = self._get_scan_data(scan_name)
-        prompt = {
-            'instruction': question,
-            'answer': answer
-        }
-        
-        prompt_inputs = self.tokenizer.batch_encode_plus([prompt['instruction']], **self.tokenizer_config)
-        qformer_inputs = self.qtokenizer.batch_encode_plus([prompt['instruction']], **self.tokenizer_config)
-        
-        ## ==== ground truth response
-        response = prompt['answer'].format(locations='', answer=answer)
-        llm_inputs = self.tokenizer.batch_encode_plus(
-            [' '.join((prompt['instruction'], response, self.tokenizer.eos_token))],
-            **self.tokenizer_config
-        )
-        
-        box_query = np.zeros((self.max_prompts, 8, 3))
-        box_mask = np.zeros((self.max_prompts,))
-        click_query = np.zeros((self.max_prompts, 3))
-        click_mask = np.zeros((self.max_prompts,))
-        
-        ret_dict['box_query'] = box_query.astype(np.float32)
-        ret_dict['box_mask'] = box_mask.astype(np.float32)
-        ret_dict['click_query'] = click_query.astype(np.float32)
-        ret_dict['click_mask'] = click_mask.astype(np.float32)
-        
-        ## the below are for LLaMA training
-        ret_dict['input_ids'] = llm_inputs['input_ids'][0].astype(np.int64)
-        ret_dict['attention_mask'] = llm_inputs['attention_mask'][0].astype(np.float32)
-        ret_dict['gradient_mask'] = \
-            (llm_inputs['attention_mask'][0] - prompt_inputs['attention_mask'][0]).astype(np.float32)
-        
-        ## the below are for QFormer and LLaMA evaluation
-        ret_dict['scan_idx'] = np.array(idx).astype(np.int64)
-        ret_dict['instruction'] = prompt_inputs['input_ids'][0].astype(np.int64)
-        ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
-        ret_dict['qformer_input_ids'] = qformer_inputs['input_ids'][0].astype(np.int64)
-        ret_dict['qformer_attention_mask'] = qformer_inputs['attention_mask'][0].astype(np.float32)
-        
-        
+        scan_name = self.annotations[idx]
+        ret_dict = {}
         if self.args.finetune_flex_opt:
             ret_dict.update(self.openscene_fts_cache.get_openscene_scan_datas(scan_name, preprocess=self.args.token_preprocess))
             ret_dict['scan_name'] = scan_name
+        
         return ret_dict
    
+   
+
+
+

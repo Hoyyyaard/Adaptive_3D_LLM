@@ -37,7 +37,7 @@ class Dataset(ScanNetBaseDataset):
             use_random_cuboid=False,
             random_cuboid_min_points=None,
         )
-        
+        self.args = args
         self.task_name = '3dllm-scene-description'
         self.grid_size_3d = args.grid_size_3d
         self.max_prompts = args.max_prompts
@@ -84,6 +84,8 @@ class Dataset(ScanNetBaseDataset):
         )
         print(f"kept {len(self.annotations)} annotations in {len(self.scan_names)} scans...")
 
+        from src.openscene_dense_pcd_fts_cache import OpenScene_Fts_Cache
+        self.openscene_fts_cache = OpenScene_Fts_Cache()
     
     def _tag_dataset(self, corpus, task_name): 
         for anno in corpus:
@@ -149,6 +151,10 @@ class Dataset(ScanNetBaseDataset):
         ret_dict['instruction_mask'] = prompt_inputs['attention_mask'][0].astype(np.float32)
         ret_dict['qformer_input_ids'] = qformer_inputs['input_ids'][0].astype(np.int64)
         ret_dict['qformer_attention_mask'] = qformer_inputs['attention_mask'][0].astype(np.float32)
+        
+        if self.args.finetune_flex_opt:
+            ret_dict.update(self.openscene_fts_cache.get_openscene_scan_datas(scan_name, preprocess=self.args.token_preprocess))
+            ret_dict['scan_name'] = scan_name
         
         return ret_dict
    
