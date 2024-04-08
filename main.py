@@ -488,7 +488,11 @@ def finetune_flex_opt_main(local_rank, args):
             # for name, param in checkpoint.items():
             #     print('\t', name, param.shape)
             print(msg)
-            
+        
+        for param in model.model.parameters():
+            param.requires_grad = True
+        model.model.train()
+        
         ## Only train the linear layers
         if args.freeze_flex_llm:
             assert config.num_flex_hidden_layers == 0
@@ -510,7 +514,7 @@ def finetune_flex_opt_main(local_rank, args):
         if is_distributed():
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
             model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=[local_rank] , find_unused_parameters=True
+                model, device_ids=[local_rank] , #find_unused_parameters=True
             )
             
         if args.optimizer == 'AdamW':

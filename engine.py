@@ -433,9 +433,7 @@ def do_flex_opt_finetune(
     time_delta = SmoothedValue(window_size=10)
     loss_avg = SmoothedValue(window_size=10)
 
-    for param in model.model.parameters():
-        param.requires_grad = True
-    model.model.train()
+
     barrier()
     
     max_tolerant_nan = 4
