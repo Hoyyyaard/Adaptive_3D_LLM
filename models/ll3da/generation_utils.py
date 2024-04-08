@@ -192,7 +192,7 @@ def generation(transformer: Callable, **kwargs):
     kwargs['eos_token_id'] = kwargs.get('eos_token_id', -1)
     kwargs['restore_prefix'] = kwargs.get('restore_prefix', False)
     
-    input_ids = kwargs.get('input_ids', None)
+      = kwargs.get('input_ids', None)
     inputs_embeds = kwargs.get('inputs_embeds', None)
     embedding_layer = transformer.get_input_embeddings()
     

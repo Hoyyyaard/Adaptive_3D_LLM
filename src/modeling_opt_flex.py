@@ -1785,6 +1785,11 @@ class FlexOPTDecoder(OPTDecoder):
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
+        ## TODO
+        # if not self.training:
+        #     past_key_values = None
+        #     attention_mask = None
+        
         batch_size, seq_length = input_shape
         past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
         # required mask seq length can be calculated via length of past
@@ -2017,9 +2022,12 @@ class FlexOPTForCausalLM(OPTForCausalLM):
     @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
     def forward(
         self,
-        batch_data_label,
-        is_eval=False,
-        task_name=None,
+        input_ids=None,
+        # is_eval=False,
+        # task_name=None,
+        attention_mask=None,
+        gradient_mask=None,
+        batch_data_label=None,
         head_mask: Optional[torch.Tensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
@@ -2108,23 +2116,21 @@ class FlexOPTForCausalLM(OPTForCausalLM):
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
-        if is_eval:
-            input_ids = batch_data_label['instruction']
-            attention_mask = batch_data_label['instruction_mask']
-        else:
-            input_ids = batch_data_label['input_ids']
-            attention_mask = batch_data_label['attention_mask']
-            gradient_mask = batch_data_label['gradient_mask']
-        
-            ## 现在的input_ids pad到了128个token太长了 这里重新pad
-            batch_valid_len_w_eos = (attention_mask != 0).sum(dim=1)
-            pad_len = batch_valid_len_w_eos.max().item()
-            input_ids = input_ids[:, :pad_len]
-            attention_mask = attention_mask[:, :pad_len]
             
-        inputs_embeds = self.model.decoder.embed_tokens(input_ids)
+        if inputs_embeds is None:
+            inputs_embeds = self.model.decoder.embed_tokens(input_ids)
+        
+        ## Only for inference(bs 1)    
+        if attention_mask is None or not self.training:
+            if not past_key_values is None:
+                attention_mask = torch.ones((inputs_embeds.shape[0], self.prefix_len+attention_mask.shape[-1]), device=inputs_embeds.device)
+            else:
+                attention_mask = torch.ones_like(inputs_embeds[..., 0], device=inputs_embeds.device)
+                
+                
         ## get sparse scene object tokens from openscene_sparse_fts by set abstract layer here
+        if batch_data_label is None:
+            batch_data_label = copy.deepcopy(self.batch_data_label)
         pre_enc_features = self.scene_token_in_head(batch_data_label['scene_tokens'])
         batch_data_label['dense_region_tokens'] = self.scene_token_in_head(batch_data_label['dense_region_tokens'])
         # features = batch_data_label['openscene_sparse_fts']
@@ -2134,114 +2140,78 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         # pre_enc_features = pre_enc_features.transpose(1, 2).contiguous()
         pre_enc_features_mask = torch.ones_like(pre_enc_features[..., 0])
         
-        if batch_data_label['click_mask'][0, 0].item() == 1:
-            click_query = batch_data_label['click_query'][:, 0, :]
-            click_query.unsqueeze_(1)
-            point_cloud_dims = [
-                batch_data_label["point_cloud_dims_min"],
-                batch_data_label["point_cloud_dims_max"],
-            ]
-            prompt_embeds = self.prompt_encoder(point_cloud_dims, click_query)
-            prompt_mask = torch.ones_like(prompt_embeds[..., 0])
-            
-            inputs_embeds = torch.cat([pre_enc_features, prompt_embeds, inputs_embeds], dim=1)
-            attention_mask = torch.cat([pre_enc_features_mask, prompt_mask, attention_mask], dim=1)
-            prefix_len = pre_enc_features.shape[1] + prompt_embeds.shape[1]
-        else:
-            inputs_embeds = torch.cat([pre_enc_features, inputs_embeds], dim=1)
-            attention_mask = torch.cat([pre_enc_features_mask, attention_mask], dim=1)
-            prefix_len = pre_enc_features.shape[1]
+        if past_key_values is None :
+            if batch_data_label['click_mask'][0, 0].item() == 1:
+                click_query = batch_data_label['click_query'][:, 0, :]
+                click_query.unsqueeze_(1)
+                point_cloud_dims = [
+                    batch_data_label["point_cloud_dims_min"],
+                    batch_data_label["point_cloud_dims_max"],
+                ]
+                prompt_embeds = self.prompt_encoder(point_cloud_dims, click_query)
+                prompt_mask = torch.ones_like(prompt_embeds[..., 0])
+                
+                inputs_embeds = torch.cat([pre_enc_features, prompt_embeds, inputs_embeds], dim=1)
+                attention_mask = torch.cat([pre_enc_features_mask, prompt_mask, attention_mask], dim=1)
+                self.prefix_len = pre_enc_features.shape[1] + prompt_embeds.shape[1]
+            else:
+                inputs_embeds = torch.cat([pre_enc_features, inputs_embeds], dim=1)
+                attention_mask = torch.cat([pre_enc_features_mask, attention_mask], dim=1)
+                self.prefix_len = pre_enc_features.shape[1]
         
-        if is_eval:
-            caption_config = {
-            'early_stopping': True,
-            'eos_token_id': self.tokenizer.eos_token_id,
-            'num_beams': 4 
+        # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
+        outputs = self.model.decoder(
+            input_ids=None,
+            attention_mask=attention_mask,
+            head_mask=head_mask,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+            dense_pcd_info={
+                'dense_region_tokens':batch_data_label['dense_region_tokens'],
             }
-            response_config = {
-                'ov-det': 64,
-                'vg': 64,
-                'dense-cap': 48,
-                'object_caption': 48,
-                'qa': 16,
-                'chat': 512,
-            }
-            max_gen_length = response_config[task_name]
-            caption_config['max_length'] = max_gen_length
-            caption_config['embedding_layer'] = self.get_input_embeddings()
-            caption_config['lm_head'] = self.lm_head
-            output_ids = []
-            for batch_id in range(inputs_embeds.shape[0]):
-            
-                caption_config['inputs_embeds'] = inputs_embeds[batch_id].unsqueeze(0)
-                caption_config['attention_mask'] = attention_mask[batch_id].unsqueeze(0)
-                caption_config['dense_pcd_info']={
-                    'dense_region_tokens':batch_data_label['dense_region_tokens'][batch_id].unsqueeze(0),
-                }
-                # caption_config['dense_pcd_info']={
-                #         'sparse_scene_xyz':pre_enc_xyz[batch_id].unsqueeze(0),
-                #         'dense_scene_fts':batch_data_label['openscene_dense_fts'][batch_id].unsqueeze(0),
-                #         'pre_enc_inds':pre_enc_inds[batch_id].unsqueeze(0),
-                #         'dense_scene_xyz':batch_data_label['openscene_dense_pcd'][batch_id].unsqueeze(0),
-                #         'valid_pcd_len': batch_data_label['valid_pcd_len'][batch_id].unsqueeze(0)
-                #     }
-                output = beam_search_decode(self.model.decoder, **caption_config)
-                output_ids.append(output['output_ids'])
-        
-            output_ids = torch.cat(output_ids, dim=0)
-            return {'output_ids':  output_ids}
-        else:
-            # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
-            outputs = self.model.decoder(
-                input_ids=None,
-                attention_mask=attention_mask,
-                head_mask=head_mask,
-                past_key_values=past_key_values,
-                inputs_embeds=inputs_embeds,
-                use_cache=use_cache,
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states,
-                return_dict=return_dict,
-                dense_pcd_info={
-                    'dense_region_tokens':batch_data_label['dense_region_tokens'],
-                }
-                # dense_pcd_info={
-                #     'sparse_scene_xyz':pre_enc_xyz,
-                #     'dense_scene_fts':batch_data_label['openscene_dense_fts'],
-                #     'pre_enc_inds':pre_enc_inds,
-                #     'dense_scene_xyz':batch_data_label['openscene_dense_pcd'],
-                #     'valid_pcd_len': batch_data_label['valid_pcd_len']
-                # }
-            )
+            # dense_pcd_info={
+            #     'sparse_scene_xyz':pre_enc_xyz,
+            #     'dense_scene_fts':batch_data_label['openscene_dense_fts'],
+            #     'pre_enc_inds':pre_enc_inds,
+            #     'dense_scene_xyz':batch_data_label['openscene_dense_pcd'],
+            #     'valid_pcd_len': batch_data_label['valid_pcd_len']
+            # }
+        )
 
-            logits = self.lm_head(outputs[0])
-            labels = batch_data_label['input_ids']
-            logits = logits[:, prefix_len-1:-1, :]
-            assert gradient_mask.shape[1] == logits.shape[1]
-            loss = None
-            if labels is not None:
-                # move labels to correct device to enable model parallelism
-                labels = labels.to(logits.device)
-                # Shift so that tokens < n predict n
-                shift_logits = logits.contiguous()
-                shift_labels = labels.contiguous()
-                # Flatten the tokens
-                loss_fct = CrossEntropyLoss(reduction='none')
-                loss = loss_fct(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
-                gradient_mask = gradient_mask.view(-1)
-                loss = torch.sum(loss * gradient_mask) / torch.sum(gradient_mask + 1e-6)
-            if not return_dict:
-                output = (logits,) + outputs[1:]
-                return (loss,) + output if loss is not None else output
+        logits = self.lm_head(outputs[0])
+        # labels = batch_data_label['input_ids']
 
-            return CausalLMOutputWithPast(
-                loss=loss,
-                logits=logits,
-                past_key_values=outputs.past_key_values,
-                hidden_states=outputs.hidden_states,
-                attentions=outputs.attentions,
-            )
+        loss = None
+        if labels is not None:
+            assert gradient_mask.shape[1] == logits[:, prefix_len-1:-1, :].shape[1]
+            # move labels to correct device to enable model parallelism
+            labels = labels.to(logits.device)
+            # Shift so that tokens < n predict n
+            shift_logits = logits[:, prefix_len-1:-1, :].contiguous()
+            shift_labels = labels.contiguous()
+            # Flatten the tokens
+            loss_fct = CrossEntropyLoss(reduction='none')
+            loss = loss_fct(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
+            gradient_mask = gradient_mask.contiguous().view(-1)
+            loss = torch.sum(loss * gradient_mask) / torch.sum(gradient_mask + 1e-6)
+        if not return_dict:
+            output = (logits,) + outputs[1:]
+            return (loss,) + output if loss is not None else output
 
+        return CausalLMOutputWithPast(
+            loss=loss,
+            logits=logits,
+            past_key_values=outputs.past_key_values,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )
+
+    def set_batch_data_label_cache(self, batch_data_label):
+        self.batch_data_label = batch_data_label
 
     def forward_preprocess_scene_token(
         self,
@@ -2360,11 +2330,9 @@ def greedy_decode(transformer: Callable, **kwargs) -> Tensor:
     
     ## prepare inputs
     max_length = kwargs['max_length']
-    attention_mask = kwargs['attention_mask']
-    inputs_embeds = kwargs['inputs_embeds'][attention_mask == 1].unsqueeze(0) # batch x nwords x channel
-    dense_pcd_info = kwargs['dense_pcd_info']
-    lm_head = kwargs['lm_head']
-    
+    inputs_embeds = kwargs['inputs_embeds']
+    batch_data_label = kwargs['batch_data_label']
+    # lm_head = kwargs['lm_head']
     
     batch, _, channel = inputs_embeds.shape
     
@@ -2380,10 +2348,11 @@ def greedy_decode(transformer: Callable, **kwargs) -> Tensor:
         
         step_output = transformer(
             inputs_embeds=temporal_inputs,
-            dense_pcd_info=dense_pcd_info
+            batch_data_label=copy.deepcopy(batch_data_label)
         )
         
-        logits = lm_head(step_output[0]).contiguous()
+        # logits = lm_head(step_output[0]).contiguous()
+        logits = step_output.logits
         ## greedy decoding, find out whats the most possible word
         next_word_id = logits[:, -1, :].argmax(-1)
         
@@ -2546,3 +2515,60 @@ def beam_search_decode(transformer: Callable, **kwargs) -> Tensor:
         'output_scores': output_scores,
         'beam_output_ids': output_ids.long()
     })
+    
+
+
+class Shell_Model(nn.Module):
+    def __init__(self, config) -> None:
+        super(Shell_Model, self).__init__()
+        self.model = FlexOPTForCausalLM.from_pretrained('ckpts/opt-model', config=config)
+        
+    def forward(self, batch_data_label, is_eval, task_name=None):
+        if is_eval:
+            input_ids = batch_data_label['instruction']
+            attention_mask = batch_data_label['instruction_mask']
+            caption_config = {
+                'early_stopping': True,
+                'eos_token_id': self.model.tokenizer.eos_token_id,
+                'num_beams': 4 
+            }
+            response_config = {
+                'ov-det': 64,
+                'vg': 64,
+                'dense-cap': 48,
+                'object_caption': 48,
+                'qa': 64,
+                'chat': 512,
+            }
+            output_ids_list = []
+            for batch_id in range(input_ids.shape[0]):
+                data_label = {
+                    'dense_region_tokens': batch_data_label['dense_region_tokens'][batch_id].unsqueeze(0),
+                    'click_mask': batch_data_label['click_mask'][batch_id].unsqueeze(0),
+                    'click_query': batch_data_label['click_query'][batch_id].unsqueeze(0),
+                    'scene_tokens': batch_data_label['scene_tokens'][batch_id].unsqueeze(0),
+                    }
+                self.model.set_batch_data_label_cache(data_label)
+                output_ids = self.model.generate(input_ids = (input_ids[batch_id].unsqueeze(0)[attention_mask[batch_id].unsqueeze(0)==1].unsqueeze(0)), max_length=128)    
+                output_ids_list.append(output_ids)
+            output_ids_list = torch.cat(output_ids_list, dim=0)
+            #     caption_config['max_length'] = response_config[task_name]
+            #     caption_config['batch_data_label'] = data_label
+            #     caption_config['inputs_embeds'] = self.model.model.decoder.embed_tokens(input_ids[batch_id].unsqueeze(0)[attention_mask[batch_id].unsqueeze(0)==1].unsqueeze(0))
+            #     output_ids = greedy_decode(self.model, **caption_config)['output_ids']
+            #     output_ids_list.append(output_ids)
+            # output_ids_list = torch.cat(output_ids_list, dim=0)
+            return {'output_ids':  output_ids_list}
+        else:
+            input_ids = batch_data_label['input_ids']
+            attention_mask = batch_data_label['attention_mask']
+            gradient_mask = batch_data_label['gradient_mask']
+        
+            ## 现在的input_ids pad到了128个token太长了 这里重新pad
+            batch_valid_len_w_eos = (attention_mask != 0).sum(dim=1)
+            pad_len = batch_valid_len_w_eos.max().item()
+            input_ids = input_ids[:, :pad_len]
+            attention_mask = attention_mask[:, :pad_len]
+            gradient_mask = gradient_mask[:, :pad_len]
+            batch_data_label['input_ids'] = input_ids
+            return self.model(input_ids=input_ids, attention_mask=attention_mask, gradient_mask=gradient_mask, batch_data_label=batch_data_label, labels = batch_data_label['input_ids'])

@@ -1,5 +1,5 @@
 {
-  "_name_or_path": "ckpts/opt-1.3b-model",
+  "_name_or_path": "ckpts/opt-model",
   "activation_dropout": 0.0,
   "activation_function": "relu",
   "architectures": [

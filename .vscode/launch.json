@@ -348,7 +348,7 @@
             "request": "launch",
             "program": "main.py",
             "console": "integratedTerminal",
-            "justMyCode": true,
+            "justMyCode": false,
             "python": "/home/admin/micromamba/envs/ll3da/bin/python",
             "args": [
                 "--use_color",
@@ -356,7 +356,7 @@
                 "--detector", "detector_Vote2Cap_DETR",
                 "--captioner", "ll3da",
                 "--checkpoint_dir", "results",
-                "--test_ckpt", "ckpts/opt-1.3b/flex/test2/checkpoint_10k.pth",
+                "--test_ckpt", "ckpts/opt-1.3b/flex/pretrain/checkpoint.pth",
                 "--dataset", "unified_scanqa",
                 "--vocab", "facebook/opt-1.3b",
                 "--qformer_vocab", "bert-base-embedding",
@@ -368,6 +368,7 @@
                 "--log_dir", "results/debug",
                 "--cache_dir","results/debug",
                 "--finetune_flex_opt",
+                "--freeze_flex_llm"
 
             ],
             "env": {

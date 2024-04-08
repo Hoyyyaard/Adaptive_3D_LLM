@@ -397,13 +397,13 @@ def finetune_flex_opt_main(local_rank, args):
     
     ### build datasets and dataloaders
     dataset_config, datasets, dataloaders = build_dataset(args)
-    from src.modeling_opt_flex import FlexOPTForCausalLM
+    from src.modeling_opt_flex import FlexOPTForCausalLM, Shell_Model
     config = AutoConfig.from_pretrained('src/flex_opt_config.json')
     if args.freeze_flex_llm:
         config.num_hidden_layers = config.num_flex_hidden_layers + config.num_hidden_layers
         config.num_flex_hidden_layers = 0
-        print('====              freeze llm                            ====')
-    model = FlexOPTForCausalLM.from_pretrained('ckpts/opt-model', config=config)
+        print('============================freeze llm====================================')
+    model = Shell_Model(config=config)
 
     # testing phase
     if args.test_only:
@@ -425,9 +425,9 @@ def finetune_flex_opt_main(local_rank, args):
                     flex_checkpoint.pop(k)
             checkpoint = flex_checkpoint
         if args.test_ckpt == 'ckpts/opt-model/pytorch_model.bin':
-            msg = model.load_state_dict(checkpoint, strict=False)
+            msg = model.model.load_state_dict(checkpoint, strict=False)
         else:
-            msg = model.load_state_dict(checkpoint['model'], strict=True)
+            msg = model.model.load_state_dict(checkpoint['model'], strict=True)
         # except:
         #     print('test the model from scratch...')
         print(msg)
@@ -455,7 +455,7 @@ def finetune_flex_opt_main(local_rank, args):
     # training phase
     else:
         
-        model.gradient_checkpointing_enable()
+        model.model.gradient_checkpointing_enable()
         assert (
             args.checkpoint_dir is not None
         ), "Please specify a checkpoint dir using --checkpoint_dir"
@@ -480,7 +480,7 @@ def finetune_flex_opt_main(local_rank, args):
                         flex_checkpoint.pop(k)
                 checkpoint = flex_checkpoint
   
-            msg = model.load_state_dict(checkpoint, strict=False)
+            msg = model.model.load_state_dict(checkpoint, strict=False)
             
             # print('====                                          ====')
             # print('==== loading following pre-trained parameters ====')
@@ -492,16 +492,16 @@ def finetune_flex_opt_main(local_rank, args):
         ## Only train the linear layers
         if args.freeze_flex_llm:
             assert config.num_flex_hidden_layers == 0
-            for name, param in model.named_parameters():
+            for name, param in model.model.named_parameters():
                 if name in checkpoint.keys():
                     param.requires_grad_(False)
             
             print("---------------------Trainable parameters when freeze llm: ----------------------")
-            for name, param in model.named_parameters():
+            for name, param in model.model.named_parameters():
                 if param.requires_grad:
                     print(name)
         else:
-            model.scene_token_in_head.weight.requires_grad_(False)
+            model.model.scene_token_in_head.weight.requires_grad_(False)
             print("---------------------freeze vision encoder----------------------")
             
             
@@ -515,13 +515,13 @@ def finetune_flex_opt_main(local_rank, args):
             
         if args.optimizer == 'AdamW':
             optimizer = torch.optim.AdamW(
-                filter(lambda params: params.requires_grad, model_no_ddp.parameters()), 
+                filter(lambda params: params.requires_grad, model_no_ddp.model.parameters()), 
                 lr=args.base_lr, 
                 weight_decay=args.weight_decay
             )
         elif args.optimizer == 'SGD':
             optimizer = torch.optim.SGD(
-                filter(lambda params: params.requires_grad, model_no_ddp.parameters()), 
+                filter(lambda params: params.requires_grad, model_no_ddp.model.parameters()), 
                 lr=args.base_lr, 
                 weight_decay=args.weight_decay
             )
@@ -531,12 +531,12 @@ def finetune_flex_opt_main(local_rank, args):
         print('====                                          ====')
         print('====  Only training the following parameters  ====')
         print('====                                          ====')
-        for name, param in model_no_ddp.named_parameters():
+        for name, param in model_no_ddp.model.named_parameters():
             if param.requires_grad is True:
                 print('\t', name, param.shape)
         
         loaded_epoch, best_val_metrics = resume_if_possible(
-            args.checkpoint_dir, model_no_ddp, optimizer
+            args.checkpoint_dir, model_no_ddp.model, optimizer
         )
         args.start_epoch = loaded_epoch + 1
         do_flex_opt_finetune(

@@ -423,7 +423,7 @@ def do_flex_opt_finetune(
     
     if is_primary():
         logout(f"call with args: {args}")
-        logout(f"{model_no_ddp.config}")
+        logout(f"{model_no_ddp.model.config}")
     
     curr_iter = args.start_epoch * len(dataloaders['train'])
     max_iters = args.max_epoch * len(dataloaders['train'])
@@ -433,9 +433,9 @@ def do_flex_opt_finetune(
     time_delta = SmoothedValue(window_size=10)
     loss_avg = SmoothedValue(window_size=10)
 
-    for param in model.parameters():
+    for param in model.model.parameters():
         param.requires_grad = True
-    model.train()
+    model.model.train()
     barrier()
     
     max_tolerant_nan = 4
@@ -461,14 +461,14 @@ def do_flex_opt_finetune(
                         batch_data_label[key] = batch_data_label[key].to(net_dtype)
                 else:
                     batch_data_label[key] = batch_data_label[key]
-    
+            
             # Forward pass
             optimizer.zero_grad()
             if args.token_preprocess:
-                model_no_ddp.forward_preprocess_scene_token(batch_data_label)
+                model_no_ddp.model.forward_preprocess_scene_token(batch_data_label)
                 continue
             else:
-                outputs = model(batch_data_label)
+                outputs = model(batch_data_label, is_eval=False)
             loss = outputs['loss']
             loss = all_reduce_average(loss)
             
@@ -484,7 +484,7 @@ def do_flex_opt_finetune(
             
             loss.backward()
             if args.clip_gradient > 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_gradient)
+                torch.nn.utils.clip_grad_norm_(model.model.parameters(), args.clip_gradient)
             optimizer.step()
     
             time_delta.update(time.time() - curr_time)
@@ -508,7 +508,7 @@ def do_flex_opt_finetune(
             if is_primary() and (curr_iter + 1) % args.save_every == 0:
                 save_checkpoint(
                     args.checkpoint_dir,
-                    model_no_ddp,
+                    model_no_ddp.model,
                     optimizer,
                     curr_epoch,
                     args,
@@ -561,7 +561,7 @@ def do_flex_opt_finetune(
         # end of an epoch
         save_checkpoint(
             args.checkpoint_dir,
-            model_no_ddp,
+            model_no_ddp.model,
             optimizer,
             curr_epoch,
             args,
