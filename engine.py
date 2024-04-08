@@ -428,6 +428,7 @@ def do_flex_opt_finetune(
     curr_iter = args.start_epoch * len(dataloaders['train'])
     max_iters = args.max_epoch * len(dataloaders['train'])
     net_device = next(model.parameters()).device
+    net_dtype = next(model.parameters()).dtype
 
     time_delta = SmoothedValue(window_size=10)
     loss_avg = SmoothedValue(window_size=10)
@@ -456,6 +457,8 @@ def do_flex_opt_finetune(
             for key in batch_data_label:
                 if not isinstance(batch_data_label[key], list):
                     batch_data_label[key] = batch_data_label[key].to(net_device)
+                    if batch_data_label[key].dtype == torch.float32:
+                        batch_data_label[key] = batch_data_label[key].to(net_dtype)
                 else:
                     batch_data_label[key] = batch_data_label[key]
     

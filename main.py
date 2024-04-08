@@ -132,6 +132,7 @@ def make_args_parser():
     
     parser.add_argument("--finetune_flex_opt", action='store_true')
     parser.add_argument("--token_preprocess", action='store_true')
+    parser.add_argument("--freeze_flex_llm", action='store_true')
     
     args = parser.parse_args()
     args.use_height = not args.no_height
@@ -150,6 +151,7 @@ def make_args_parser():
     print('============== fintune flex opt =====================')
     print(f'finetune_flex_opt: ', args.finetune_flex_opt)
     print(f'token_preprocess: ', args.token_preprocess)
+    print(f'freeze_flex_llm: ', args.freeze_flex_llm)
     
     return args
 
@@ -397,13 +399,31 @@ def finetune_flex_opt_main(local_rank, args):
     dataset_config, datasets, dataloaders = build_dataset(args)
     from src.modeling_opt_flex import FlexOPTForCausalLM
     config = AutoConfig.from_pretrained('src/flex_opt_config.json')
+    if args.freeze_flex_llm:
+        config.num_hidden_layers = config.num_flex_hidden_layers + config.num_hidden_layers
+        config.num_flex_hidden_layers = 0
+        print('====              freeze llm                            ====')
     model = FlexOPTForCausalLM.from_pretrained('ckpts/opt-model', config=config)
-    
+
     # testing phase
     if args.test_only:
 
         # try:
         checkpoint = torch.load(args.test_ckpt, map_location=torch.device("cpu"))
+        if args.test_ckpt.split('/')[-1] == 'pytorch_model.bin':
+            replace_keys = [f'model.decoder.layers.{li+config.num_hidden_layers}' for li in range(config.num_flex_hidden_layers)]
+            flex_checkpoint = copy.deepcopy(checkpoint)
+            for k,v in checkpoint.items():
+                find_key = None
+                for rk in replace_keys:
+                    if k.find(rk) != -1:
+                        find_key = rk
+                        break
+                if not find_key is None:
+                    layer_idx = int(find_key.split('.')[-1])-config.num_hidden_layers
+                    flex_checkpoint[k.replace(find_key, f'model.decoder.flex_layers.{layer_idx}')] = v
+                    flex_checkpoint.pop(k)
+            checkpoint = flex_checkpoint
         if args.test_ckpt == 'ckpts/opt-model/pytorch_model.bin':
             msg = model.load_state_dict(checkpoint, strict=False)
         else:
@@ -434,6 +454,7 @@ def finetune_flex_opt_main(local_rank, args):
         
     # training phase
     else:
+        
         model.gradient_checkpointing_enable()
         assert (
             args.checkpoint_dir is not None
@@ -467,6 +488,22 @@ def finetune_flex_opt_main(local_rank, args):
             # for name, param in checkpoint.items():
             #     print('\t', name, param.shape)
             print(msg)
+            
+        ## Only train the linear layers
+        if args.freeze_flex_llm:
+            assert config.num_flex_hidden_layers == 0
+            for name, param in model.named_parameters():
+                if name in checkpoint.keys():
+                    param.requires_grad_(False)
+            
+            print("---------------------Trainable parameters when freeze llm: ----------------------")
+            for name, param in model.named_parameters():
+                if param.requires_grad:
+                    print(name)
+        else:
+            model.scene_token_in_head.weight.requires_grad_(False)
+            print("---------------------freeze vision encoder----------------------")
+            
             
         model_no_ddp = model.cuda()
         model = model.cuda(local_rank)

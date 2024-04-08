@@ -1301,17 +1301,32 @@ class FlexAttention(nn.Module):
             # key_states = self.k_proj(hidden_states)
             # value_states = self.v_proj(hidden_states)
             if hr_key_value_states is not None:
-                ## hr_key_value_states [bs, text_seq_len, dim]
+                ## TODO: inference
+                ## hr_key_value_states [bs, text_seq_len, dense_token_num, dim]
                 key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
                 value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
-                hr_key_states = self.k_hr_proj(hr_key_value_states)
-                hr_value_states = self.v_hr_proj(hr_key_value_states)
-                # key_states = torch.cat([key_states, hr_key_states], dim=2)
-                # value_states = torch.cat([value_states, hr_value_states], dim=2)
-                # hr_attention_mask = torch.zeros_like(hr_key_value_states[:,:,0], device=hr_value_states.device).unsqueeze(1)
-                # column_attention_mask = attention_mask[:,:,:,0].transpose(1, 2)
-                # column_attention_mask = torch.cat([column_attention_mask, hr_attention_mask.transpose(1, 2)], dim=1)
-                # attention_mask = torch.bmm(attention_mask[:,:,:,0].transpose(1, 2), column_attention_mask.transpose(1, 2)).unsqueeze(1)
+                dense_token_num = hr_key_value_states.shape[2]
+                
+                hr_attention_mask = torch.ones((bsz, hr_key_value_states.shape[1], hr_key_value_states.shape[1]*hr_key_value_states.shape[2]), device=hr_key_value_states.device)*torch.finfo(hr_key_value_states.dtype).min
+                ## 每个text token只能跟自己选出来的dense scene token进行交互
+                ## pad的text token也需要mask
+                batch_valid_len_w_eos = (attention_mask.squeeze(1)[:, -1, :] == 0).sum(dim=1) - self.config.scene_token_num
+                for bs in range(bsz):
+                    valid_length = batch_valid_len_w_eos[bs].item()
+                    for j in range(valid_length):
+                        start_index = j * dense_token_num
+                        end_index = (j+1) * dense_token_num
+                        hr_attention_mask[bs, j, start_index:end_index] = 0.
+                ## 最后为scene token加上attn mask，即每个scene token都可以于dense region token交互
+                scene_token_attention_mask = torch.zeros((bsz, self.config.scene_token_num, hr_key_value_states.shape[1]*hr_key_value_states.shape[2]), device=hr_key_value_states.device)
+                hr_attention_mask = torch.cat([scene_token_attention_mask, hr_attention_mask], dim=1)
+                ## concat 到原来的attention mask上
+                attention_mask = torch.cat([attention_mask, hr_attention_mask.unsqueeze(1)], dim=-1)
+                hr_key_value_states = hr_key_value_states.view(bsz, -1, hidden_states.shape[-1])
+                hr_key_states = self._shape(self.k_hr_proj(hr_key_value_states), -1, bsz)
+                hr_value_states = self._shape(self.v_hr_proj(hr_key_value_states), -1, bsz)
+                key_states = torch.cat([key_states, hr_key_states], dim=2)
+                value_states = torch.cat([value_states, hr_value_states], dim=2)
             
         if self.is_decoder:
             # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
@@ -1369,72 +1384,72 @@ class FlexAttention(nn.Module):
 
         attn_output = torch.bmm(attn_probs, value_states)
         
-        ## TODO：check inference
-        if hr_key_value_states is not None:        ## [bs, text_seq_len, 4*32, 2048]
-            dense_scene_tokens_num = hr_key_value_states.shape[2]
-            src_len = key_states.size(1) + dense_scene_tokens_num
-            ## 计算dense_scene_tokens的attention
-            for text_query_token_id in range(query_states.shape[1]-self.config.scene_token_num):
+        # ## TODO：check inference
+        # if hr_key_value_states is not None:        ## [bs, text_seq_len, 4*32, 2048]
+        #     dense_scene_tokens_num = hr_key_value_states.shape[2]
+        #     src_len = key_states.size(1) + dense_scene_tokens_num
+        #     ## 计算dense_scene_tokens的attention
+        #     for text_query_token_id in range(query_states.shape[1]-self.config.scene_token_num):
                 
-                if not self.training:
-                    text_query_token_id=query_states.shape[1]-self.config.scene_token_num-1
+        #         if not self.training:
+        #             text_query_token_id=query_states.shape[1]-self.config.scene_token_num-1
                 
-                query_state_per_token = query_states[:, text_query_token_id+ self.config.scene_token_num, :].unsqueeze(1)
-                attn_weight_per_token = attn_weights[:, text_query_token_id+ self.config.scene_token_num, :].unsqueeze(1)
-                attn_mask_per_token = attention_mask[:, :, text_query_token_id+ self.config.scene_token_num, :].unsqueeze(2)
+        #         query_state_per_token = query_states[:, text_query_token_id+ self.config.scene_token_num, :].unsqueeze(1)
+        #         attn_weight_per_token = attn_weights[:, text_query_token_id+ self.config.scene_token_num, :].unsqueeze(1)
+        #         attn_mask_per_token = attention_mask[:, :, text_query_token_id+ self.config.scene_token_num, :].unsqueeze(2)
                 
-                flex_key_state_per_token = self._shape(hr_key_states[:, text_query_token_id, :].unsqueeze(1), -1, bsz).view(*proj_shape)
+        #         flex_key_state_per_token = self._shape(hr_key_states[:, text_query_token_id, :].unsqueeze(1), -1, bsz).view(*proj_shape)
                 
-                flex_attn_weight_per_token = torch.bmm(query_state_per_token, flex_key_state_per_token.transpose(1,2))
-                flex_attn_mask_per_token = torch.zeros(bsz, 1, 1, dense_scene_tokens_num, device=attn_mask_per_token.device, dtype=attn_mask_per_token.dtype)
+        #         flex_attn_weight_per_token = torch.bmm(query_state_per_token, flex_key_state_per_token.transpose(1,2))
+        #         flex_attn_mask_per_token = torch.zeros(bsz, 1, 1, dense_scene_tokens_num, device=attn_mask_per_token.device, dtype=attn_mask_per_token.dtype)
                 
-                attn_weight_per_token = torch.cat([attn_weight_per_token, flex_attn_weight_per_token], dim=-1)
-                attn_mask_per_token = torch.cat([attn_mask_per_token, flex_attn_mask_per_token], dim=-1)
+        #         attn_weight_per_token = torch.cat([attn_weight_per_token, flex_attn_weight_per_token], dim=-1)
+        #         attn_mask_per_token = torch.cat([attn_mask_per_token, flex_attn_mask_per_token], dim=-1)
 
-                flex_value_states_per_token = self._shape(hr_value_states[:, text_query_token_id, :].unsqueeze(1), -1, bsz).view(*proj_shape)
-                value_states_per_token = torch.cat([value_states, flex_value_states_per_token], dim=1)
+        #         flex_value_states_per_token = self._shape(hr_value_states[:, text_query_token_id, :].unsqueeze(1), -1, bsz).view(*proj_shape)
+        #         value_states_per_token = torch.cat([value_states, flex_value_states_per_token], dim=1)
                 
-                if attn_weight_per_token.size() != (bsz * self.num_heads, 1, src_len):
-                    raise ValueError(
-                        f"Attention weights should be of size {(bsz * self.num_heads, 1, src_len)}, but is"
-                        f" {attn_weight_per_token.size()}"
-                    )
+        #         if attn_weight_per_token.size() != (bsz * self.num_heads, 1, src_len):
+        #             raise ValueError(
+        #                 f"Attention weights should be of size {(bsz * self.num_heads, 1, src_len)}, but is"
+        #                 f" {attn_weight_per_token.size()}"
+        #             )
             
-                if attn_mask_per_token.size() != (bsz, 1, 1, src_len):
-                    raise ValueError(
-                        f"Attention mask should be of size {(bsz, 1, 1, src_len)}, but is {attn_mask_per_token.size()}"
-                    )
-                attn_weight_per_token = attn_weight_per_token.view(bsz, self.num_heads, 1, src_len) + attn_mask_per_token
-                attn_weight_per_token = torch.max(
-                    attn_weight_per_token, torch.tensor(torch.finfo(attn_weight_per_token.dtype).min, device=attn_weight_per_token.device)
-                )
-                attn_weight_per_token = attn_weight_per_token.view(bsz * self.num_heads, 1, src_len)
+        #         if attn_mask_per_token.size() != (bsz, 1, 1, src_len):
+        #             raise ValueError(
+        #                 f"Attention mask should be of size {(bsz, 1, 1, src_len)}, but is {attn_mask_per_token.size()}"
+        #             )
+        #         attn_weight_per_token = attn_weight_per_token.view(bsz, self.num_heads, 1, src_len) + attn_mask_per_token
+        #         attn_weight_per_token = torch.max(
+        #             attn_weight_per_token, torch.tensor(torch.finfo(attn_weight_per_token.dtype).min, device=attn_weight_per_token.device)
+        #         )
+        #         attn_weight_per_token = attn_weight_per_token.view(bsz * self.num_heads, 1, src_len)
 
-                # attn_weights_bf_sm[:, text_query_token_id, :] = attn_weight_per_token[:, :, :key_states.size(1)]
-                # upcast to fp32 if the weights are in fp16. Please see https://github.com/huggingface/transformers/pull/17437
-                if attn_weight_per_token.dtype == torch.float16:
-                    attn_weight_per_token = nn.functional.softmax(attn_weight_per_token, dim=-1, dtype=torch.float32).to(torch.float16)
-                else:
-                    attn_weight_per_token = nn.functional.softmax(attn_weight_per_token, dim=-1)
+        #         # attn_weights_bf_sm[:, text_query_token_id, :] = attn_weight_per_token[:, :, :key_states.size(1)]
+        #         # upcast to fp32 if the weights are in fp16. Please see https://github.com/huggingface/transformers/pull/17437
+        #         if attn_weight_per_token.dtype == torch.float16:
+        #             attn_weight_per_token = nn.functional.softmax(attn_weight_per_token, dim=-1, dtype=torch.float32).to(torch.float16)
+        #         else:
+        #             attn_weight_per_token = nn.functional.softmax(attn_weight_per_token, dim=-1)
 
-                if layer_head_mask is not None:
-                    if layer_head_mask.size() != (self.num_heads,):
-                        raise ValueError(
-                            f"Head mask for a single layer should be of size {(self.num_heads,)}, but is"
-                            f" {layer_head_mask.size()}"
-                        )
-                    attn_weight_per_token = layer_head_mask.view(1, -1, 1, 1) * attn_weight_per_token.view(bsz, self.num_heads, 1, src_len)
-                    attn_weight_per_token = attn_weight_per_token.view(bsz * self.num_heads, 1, src_len)
+        #         if layer_head_mask is not None:
+        #             if layer_head_mask.size() != (self.num_heads,):
+        #                 raise ValueError(
+        #                     f"Head mask for a single layer should be of size {(self.num_heads,)}, but is"
+        #                     f" {layer_head_mask.size()}"
+        #                 )
+        #             attn_weight_per_token = layer_head_mask.view(1, -1, 1, 1) * attn_weight_per_token.view(bsz, self.num_heads, 1, src_len)
+        #             attn_weight_per_token = attn_weight_per_token.view(bsz * self.num_heads, 1, src_len)
 
-                attn_probs_per_token = nn.functional.dropout(attn_weight_per_token, p=self.dropout, training=self.training)
+        #         attn_probs_per_token = nn.functional.dropout(attn_weight_per_token, p=self.dropout, training=self.training)
 
-                attn_output_per_token = torch.bmm(attn_probs_per_token, value_states_per_token)
+        #         attn_output_per_token = torch.bmm(attn_probs_per_token, value_states_per_token)
                 
-                attn_output[:, text_query_token_id, :] = attn_output_per_token.squeeze(1)
-                attn_weights[:, text_query_token_id, :] = attn_weight_per_token[:, :, :key_states.size(1)].squeeze(1)
+        #         attn_output[:, text_query_token_id, :] = attn_output_per_token.squeeze(1)
+        #         attn_weights[:, text_query_token_id, :] = attn_weight_per_token[:, :, :key_states.size(1)].squeeze(1)
                 
-                if not self.training:
-                    break
+        #         if not self.training:
+        #             break
             
         if output_attentions:
             # this operation is a bit awkward, but it's required to
@@ -1461,13 +1476,15 @@ class FlexAttention(nn.Module):
 
         attn_output = self.out_proj(attn_output)
         
-        ## TODO：check 输出global attn map，现在的attn_weights是多头的 使用了平均
         src_len = key_states.size(1)
         multi_head_attn_weights = attn_weights_bf_sm.view(bsz, self.num_heads, tgt_len, src_len)
-        global_attention_map = torch.mean(multi_head_attn_weights, dim=1)
-        scene_token_hidden_state = global_attention_map[:, self.config.scene_token_num:, :][:, :, :self.config.scene_token_num] * self.config.attn_softmax_scale
+        global_attention_map = torch.sum(multi_head_attn_weights, dim=1).detach()
+        scene_token_hidden_state = global_attention_map[:, self.config.scene_token_num:, :][:, :, :self.config.scene_token_num] #* self.config.attn_softmax_scale
         scene_token_hidden_state = nn.functional.softmax(scene_token_hidden_state, dim=-1)
         
+        ## text token中会有pad token，根据attn mask处理
+        # batch_valid_len_w_eos = (attention_mask.squeeze(1)[:, -1, :] == 0).sum(dim=1) - self.config.scene_token_num
+        # scene_token_hidden_state = [hs[:batch_valid_len_w_eos[hi].item()] for hi,hs in enumerate(scene_token_hidden_state)]
         
         return attn_output, attn_weights_reshaped, past_key_value, scene_token_hidden_state
 
@@ -1481,7 +1498,7 @@ class Dense_Region_Selector(nn.Module):
         self.select_threshold = select_threshold
         self.region_radius = config.region_radius
         self.region_nsample = config.region_sample_num
-        self.dense_scene_token_head = nn.Linear(768+3, config.hidden_size)
+        self.hidden_dim = config.word_embed_proj_dim
         ## +3 means concat xyz
         # mlp_dims = [768+3, 2048]
         # self.pcd_tokenizer = PointnetSAModuleVotes(
@@ -1501,10 +1518,11 @@ class Dense_Region_Selector(nn.Module):
         top_values, top_indices = torch.topk(scene_token_hidden_state, k, dim=-1)
         batch_select_dense_region_tokens = []
         for bs in range(len(top_indices)):
-            select_dense_region_tokens = torch.stack([dense_region_tokens[bs, text_token_i, :, :].view(-1, 771) for text_token_i in top_indices[bs]],dim=0)
+            ## [dense_token_num, hidden_dim]
+            select_dense_region_tokens = torch.stack([dense_region_tokens[bs, text_token_i, :, :].view(-1, self.hidden_dim) for text_token_i in top_indices[bs]],dim=0)
             batch_select_dense_region_tokens.append(select_dense_region_tokens)
         batch_select_dense_region_tokens = torch.stack(batch_select_dense_region_tokens, dim=0)
-        batch_select_dense_region_tokens = self.dense_scene_token_head(batch_select_dense_region_tokens)
+        # batch_select_dense_region_tokens = self.scene_token_head(batch_select_dense_region_tokens)
         return batch_select_dense_region_tokens
 
         ## argmax版本 
@@ -2098,10 +2116,17 @@ class FlexOPTForCausalLM(OPTForCausalLM):
             input_ids = batch_data_label['input_ids']
             attention_mask = batch_data_label['attention_mask']
             gradient_mask = batch_data_label['gradient_mask']
+        
+            ## 现在的input_ids pad到了128个token太长了 这里重新pad
+            batch_valid_len_w_eos = (attention_mask != 0).sum(dim=1)
+            pad_len = batch_valid_len_w_eos.max().item()
+            input_ids = input_ids[:, :pad_len]
+            attention_mask = attention_mask[:, :pad_len]
             
         inputs_embeds = self.model.decoder.embed_tokens(input_ids)
         ## get sparse scene object tokens from openscene_sparse_fts by set abstract layer here
         pre_enc_features = self.scene_token_in_head(batch_data_label['scene_tokens'])
+        batch_data_label['dense_region_tokens'] = self.scene_token_in_head(batch_data_label['dense_region_tokens'])
         # features = batch_data_label['openscene_sparse_fts']
         # features = features.transpose(1, 2).contiguous()
         # xyz = batch_data_label['openscene_sparse_pcd']
