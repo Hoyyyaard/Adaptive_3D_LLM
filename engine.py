@@ -482,7 +482,7 @@ def do_flex_opt_finetune(
             
             loss.backward()
             if args.clip_gradient > 0:
-                torch.nn.utils.clip_grad_norm_(model.model.parameters(), args.clip_gradient)
+                torch.nn.utils.clip_grad_norm_(model_no_ddp.model.parameters(), args.clip_gradient)
             optimizer.step()
     
             time_delta.update(time.time() - curr_time)

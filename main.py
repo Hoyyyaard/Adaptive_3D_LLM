@@ -133,6 +133,7 @@ def make_args_parser():
     parser.add_argument("--finetune_flex_opt", action='store_true')
     parser.add_argument("--token_preprocess", action='store_true')
     parser.add_argument("--freeze_flex_llm", action='store_true')
+    parser.add_argument("--load_pretrain_encoder", action='store_true')
     
     args = parser.parse_args()
     args.use_height = not args.no_height
@@ -152,6 +153,7 @@ def make_args_parser():
     print(f'finetune_flex_opt: ', args.finetune_flex_opt)
     print(f'token_preprocess: ', args.token_preprocess)
     print(f'freeze_flex_llm: ', args.freeze_flex_llm)
+    print(f'load_pretrain_encoder: ', args.load_pretrain_encoder)
     
     return args
 
@@ -350,7 +352,7 @@ def main(local_rank, args):
                 args.checkpoint_dir, model_no_ddp, optimizer
             )
             args.start_epoch = loaded_epoch + 1
-            do_flex_opt_finetune(
+            do_train(
                 args,
                 model,
                 model_no_ddp,
@@ -479,12 +481,29 @@ def finetune_flex_opt_main(local_rank, args):
                         flex_checkpoint[k.replace(find_key, f'model.decoder.flex_layers.{layer_idx}')] = v
                         flex_checkpoint.pop(k)
                 checkpoint = flex_checkpoint
-  
+            elif args.load_pretrain_encoder:
+                checkpoint = checkpoint['model']
+                replace_keys = [f'model.decoder.layers.{li+config.num_hidden_layers}' for li in range(config.num_flex_hidden_layers)]
+                flex_checkpoint = copy.deepcopy(checkpoint)
+                for k,v in checkpoint.items():
+                    find_key = None
+                    for rk in replace_keys:
+                        if k.find(rk) != -1:
+                            find_key = rk
+                            break
+                    if not find_key is None:
+                        layer_idx = int(find_key.split('.')[-1])-config.num_hidden_layers
+                        flex_checkpoint[k.replace(find_key, f'model.decoder.flex_layers.{layer_idx}')] = v
+                        flex_checkpoint.pop(k)
+                checkpoint = flex_checkpoint
+            else:
+                checkpoint = checkpoint['model']
+            
             msg = model.model.load_state_dict(checkpoint, strict=False)
             
-            # print('====                                          ====')
-            # print('==== loading following pre-trained parameters ====')
-            # print('====                                          ====')
+            print('====                                          ====')
+            print('==== loading following pre-trained parameters ====')
+            print('====                                          ====')
             # for name, param in checkpoint.items():
             #     print('\t', name, param.shape)
             print(msg)
@@ -514,7 +533,7 @@ def finetune_flex_opt_main(local_rank, args):
         if is_distributed():
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
             model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=[local_rank] , #find_unused_parameters=True
+                model, device_ids=[local_rank] , find_unused_parameters=True
             )
             
         if args.optimizer == 'AdamW':
@@ -532,12 +551,13 @@ def finetune_flex_opt_main(local_rank, args):
         else:
             raise NotImplementedError
         
-        print('====                                          ====')
-        print('====  Only training the following parameters  ====')
-        print('====                                          ====')
-        for name, param in model_no_ddp.model.named_parameters():
-            if param.requires_grad is True:
-                print('\t', name, param.shape)
+        if is_primary():
+            print('====                                          ====')
+            print('====  Only training the following parameters  ====')
+            print('====                                          ====')
+            for name, param in model_no_ddp.model.named_parameters():
+                if param.requires_grad is True:
+                    print('\t', name, param.shape)
         
         loaded_epoch, best_val_metrics = resume_if_possible(
             args.checkpoint_dir, model_no_ddp.model, optimizer

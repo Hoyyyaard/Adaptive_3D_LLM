@@ -297,7 +297,8 @@
                 "--ngpus", "1",
                 "--cache_dir", "results/debug",
                 "--finetune_flex_opt",
-                "--pretrained_weights","ckpts/opt-model/pytorch_model.bin",
+                "--pretrained_weights","ckpts/opt-1.3b/flex/pretrain/checkpoint.pth",
+                "--load_pretrain_encoder"
             ],
             "env": {
                 "PYTHONWARNINGS":"ignore:semaphore_tracker:UserWarning",
@@ -348,7 +349,7 @@
             "request": "launch",
             "program": "main.py",
             "console": "integratedTerminal",
-            "justMyCode": false,
+            "justMyCode": true,
             "python": "/home/admin/micromamba/envs/ll3da/bin/python",
             "args": [
                 "--use_color",
@@ -356,8 +357,8 @@
                 "--detector", "detector_Vote2Cap_DETR",
                 "--captioner", "ll3da",
                 "--checkpoint_dir", "results",
-                "--test_ckpt", "ckpts/opt-1.3b/flex/pretrain/checkpoint.pth",
-                "--dataset", "unified_scanqa",
+                "--test_ckpt", "ckpts/opt-1.3b/flex/tuned-on-pretrain-4epo/checkpoint_12k.pth",
+                "--dataset", "unified_object_caption",
                 "--vocab", "facebook/opt-1.3b",
                 "--qformer_vocab", "bert-base-embedding",
                 "--dist_url", "tcp://localhost:12345",
@@ -368,7 +369,6 @@
                 "--log_dir", "results/debug",
                 "--cache_dir","results/debug",
                 "--finetune_flex_opt",
-                "--freeze_flex_llm"
 
             ],
             "env": {

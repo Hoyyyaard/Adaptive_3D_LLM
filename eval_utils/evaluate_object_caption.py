@@ -110,7 +110,10 @@ def evaluate(
         pbar.update(1)
         curr_time = time.time()
         for key in batch_data_label:
-            batch_data_label[key] = batch_data_label[key].to(net_device)
+            if isinstance(batch_data_label[key], list):
+                batch_data_label[key] = batch_data_label[key]
+            else:
+                batch_data_label[key] = batch_data_label[key].to(net_device)
         
         # model_input = {
         #     'point_clouds': batch_data_label['point_clouds'],
@@ -144,6 +147,8 @@ def evaluate(
         
         sample_index = batch_data_label['scan_idx'].cpu().tolist()
         gt_answers = [annotations[sample_index[idx]]['answers'] for idx in range(output_ids.shape[0])]
+        print(f"GT: {gt_answers}")
+        print(f"Pred: {answers}")
         for idx in range(output_ids.shape[0]):
             anno = annotations[sample_index[idx]]
             key = '-'.join(((anno['global_ann_id'])))

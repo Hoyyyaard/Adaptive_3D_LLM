@@ -1831,7 +1831,8 @@ class FlexOPTDecoder(OPTDecoder):
                     "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
                 )
                 use_cache = False
-
+        use_cache = False
+        
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
@@ -2143,7 +2144,7 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         if past_key_values is None :
             if batch_data_label['click_mask'][0, 0].item() == 1:
                 click_query = batch_data_label['click_query'][:, 0, :]
-                click_query.unsqueeze_(1)
+                click_query = click_query.unsqueeze(1)
                 point_cloud_dims = [
                     batch_data_label["point_cloud_dims_min"],
                     batch_data_label["point_cloud_dims_max"],
@@ -2187,11 +2188,11 @@ class FlexOPTForCausalLM(OPTForCausalLM):
 
         loss = None
         if labels is not None:
-            assert gradient_mask.shape[1] == logits[:, prefix_len-1:-1, :].shape[1]
+            assert gradient_mask.shape[1] == logits[:, self.prefix_len-1:-1, :].shape[1]
             # move labels to correct device to enable model parallelism
             labels = labels.to(logits.device)
             # Shift so that tokens < n predict n
-            shift_logits = logits[:, prefix_len-1:-1, :].contiguous()
+            shift_logits = logits[:, self.prefix_len-1:-1, :].contiguous()
             shift_labels = labels.contiguous()
             # Flatten the tokens
             loss_fct = CrossEntropyLoss(reduction='none')
@@ -2540,6 +2541,7 @@ class Shell_Model(nn.Module):
                 'qa': 64,
                 'chat': 512,
             }
+            ## TODO:处理 batch
             output_ids_list = []
             for batch_id in range(input_ids.shape[0]):
                 data_label = {
@@ -2547,10 +2549,12 @@ class Shell_Model(nn.Module):
                     'click_mask': batch_data_label['click_mask'][batch_id].unsqueeze(0),
                     'click_query': batch_data_label['click_query'][batch_id].unsqueeze(0),
                     'scene_tokens': batch_data_label['scene_tokens'][batch_id].unsqueeze(0),
+                    'point_cloud_dims_min': batch_data_label['point_cloud_dims_min'][batch_id].unsqueeze(0),
+                    'point_cloud_dims_max': batch_data_label['point_cloud_dims_max'][batch_id].unsqueeze(0),
                     }
                 self.model.set_batch_data_label_cache(data_label)
                 output_ids = self.model.generate(input_ids = (input_ids[batch_id].unsqueeze(0)[attention_mask[batch_id].unsqueeze(0)==1].unsqueeze(0)), max_length=128)    
-                output_ids_list.append(output_ids)
+                output_ids_list.append(output_ids[:, len(input_ids[batch_id].unsqueeze(0)[attention_mask[batch_id].unsqueeze(0)==1]):])
             output_ids_list = torch.cat(output_ids_list, dim=0)
             #     caption_config['max_length'] = response_config[task_name]
             #     caption_config['batch_data_label'] = data_label
