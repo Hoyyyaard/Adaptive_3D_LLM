@@ -28,8 +28,8 @@
   "vocab_size": 50272,
   "word_embed_proj_dim": 2048,
 
-  "num_hidden_layers": 8,
-  "num_flex_hidden_layers": 16,
+  "num_hidden_layers": 22,
+  "num_flex_hidden_layers": 2,
   "attn_softmax_scale": 100,
 
   "scene_token_num": 512,

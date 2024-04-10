@@ -457,7 +457,7 @@ def finetune_flex_opt_main(local_rank, args):
     # training phase
     else:
         
-        model.model.gradient_checkpointing_enable()
+        # model.model.gradient_checkpointing_enable()
         assert (
             args.checkpoint_dir is not None
         ), "Please specify a checkpoint dir using --checkpoint_dir"
@@ -507,28 +507,38 @@ def finetune_flex_opt_main(local_rank, args):
             # for name, param in checkpoint.items():
             #     print('\t', name, param.shape)
             print(msg)
+                    
+        model_no_ddp = model.cuda()
         
-        for param in model.model.parameters():
+        
+        for param in model_no_ddp.model.parameters():
             param.requires_grad = True
-        model.model.train()
+        model_no_ddp.model.train()
         
         ## Only train the linear layers
         if args.freeze_flex_llm:
             assert config.num_flex_hidden_layers == 0
-            for name, param in model.model.named_parameters():
+            for name, param in model_no_ddp.model.named_parameters():
                 if name in checkpoint.keys():
                     param.requires_grad_(False)
             
             print("---------------------Trainable parameters when freeze llm: ----------------------")
-            for name, param in model.model.named_parameters():
+            for name, param in model_no_ddp.model.named_parameters():
                 if param.requires_grad:
                     print(name)
         else:
-            model.model.scene_token_in_head.weight.requires_grad_(False)
+            model_no_ddp.model.scene_token_in_head.weight.requires_grad_(False)
             print("---------------------freeze vision encoder----------------------")
-            
-            
-        model_no_ddp = model.cuda()
+        
+        ## Only for test flex performance
+        for name, param in model_no_ddp.model.named_parameters():
+             if name.find('hr_proj') != -1:
+                param.requires_grad_(True)
+             else:
+                param.requires_grad_(False)
+        
+        
+        
         model = model.cuda(local_rank)
         if is_distributed():
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -544,12 +554,16 @@ def finetune_flex_opt_main(local_rank, args):
             )
         elif args.optimizer == 'SGD':
             optimizer = torch.optim.SGD(
-                filter(lambda params: params.requires_grad, model_no_ddp.model.parameters()), 
+                filter(lambda params: params.requires_grad, model_no_ddp.model.parameters()),
                 lr=args.base_lr, 
                 weight_decay=args.weight_decay
             )
         else:
             raise NotImplementedError
+        
+        # print("Parameters to be updated by the optimizer:")
+        # for param_group in optimizer.param_groups:
+        #     print(param_group['params'])
         
         if is_primary():
             print('====                                          ====')

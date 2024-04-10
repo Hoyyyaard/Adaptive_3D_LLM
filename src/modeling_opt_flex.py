@@ -147,7 +147,7 @@ class OPTAttention(nn.Module):
         self.out_proj = nn.Linear(self.embed_dim, self.embed_dim, bias=self.enable_bias)
 
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
-        return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
+        return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous().requires_grad_(True)
 
     def forward(
         self,
@@ -1257,7 +1257,7 @@ class FlexAttention(nn.Module):
         self.out_proj = nn.Linear(self.embed_dim, self.embed_dim, bias=self.enable_bias)
     
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
-        return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
+        return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous().requires_grad_(True)
 
     def forward(
         self,
@@ -1302,6 +1302,8 @@ class FlexAttention(nn.Module):
             # value_states = self.v_proj(hidden_states)
             if hr_key_value_states is not None:
                 ## TODO: inference
+                
+                # hr_key_value_states.requires_grad_(True)
                 ## hr_key_value_states [bs, text_seq_len, dense_token_num, dim]
                 key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
                 value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
@@ -1322,7 +1324,7 @@ class FlexAttention(nn.Module):
                 hr_attention_mask = torch.cat([scene_token_attention_mask, hr_attention_mask], dim=1)
                 ## concat 到原来的attention mask上
                 attention_mask = torch.cat([attention_mask, hr_attention_mask.unsqueeze(1)], dim=-1)
-                hr_key_value_states = hr_key_value_states.view(bsz, -1, hidden_states.shape[-1])
+                hr_key_value_states = hr_key_value_states.view(bsz, -1, hidden_states.shape[-1]).contiguous()
                 hr_key_states = self._shape(self.k_hr_proj(hr_key_value_states), -1, bsz)
                 hr_value_states = self._shape(self.v_hr_proj(hr_key_value_states), -1, bsz)
                 key_states = torch.cat([key_states, hr_key_states], dim=2)
@@ -1699,7 +1701,7 @@ class FlexOPTDecoder(OPTDecoder):
         
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
 
-        self.gradient_checkpointing = True
+        # self.gradient_checkpointing = True
         # Initialize weights and apply final processing
         self.post_init()
 
