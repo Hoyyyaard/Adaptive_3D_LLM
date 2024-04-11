@@ -134,6 +134,7 @@ def make_args_parser():
     parser.add_argument("--token_preprocess", action='store_true')
     parser.add_argument("--freeze_flex_llm", action='store_true')
     parser.add_argument("--load_pretrain_encoder", action='store_true')
+    parser.add_argument("--gradient_checkpoint", action='store_true')
     
     args = parser.parse_args()
     args.use_height = not args.no_height
@@ -154,6 +155,7 @@ def make_args_parser():
     print(f'token_preprocess: ', args.token_preprocess)
     print(f'freeze_flex_llm: ', args.freeze_flex_llm)
     print(f'load_pretrain_encoder: ', args.load_pretrain_encoder)
+    print(f'gradient_checkpoint: ', args.gradient_checkpoint)
     
     return args
 
@@ -457,7 +459,13 @@ def finetune_flex_opt_main(local_rank, args):
     # training phase
     else:
         
-        # model.model.gradient_checkpointing_enable()
+        if args.gradient_checkpoint:
+            print('Training use gradient checkpointing...')
+            # from functools import partial
+            # notfailing_checkpoint = partial(torch.utils.checkpoint.checkpoint, use_reentrant=False)
+            # torch.utils.checkpoint.checkpoint = notfailing_checkpoint
+            model.model.gradient_checkpointing_enable()
+            model.model.model.decoder.gradient_checkpointing = True
         assert (
             args.checkpoint_dir is not None
         ), "Please specify a checkpoint dir using --checkpoint_dir"
@@ -538,6 +546,20 @@ def finetune_flex_opt_main(local_rank, args):
                 param.requires_grad_(False)
         
         
+        if is_primary():
+            print('====                                          ====')
+            print('====  Only training the following parameters  ====')
+            print('====                                          ====')
+            for name, param in model_no_ddp.model.named_parameters():
+                if param.requires_grad is True:
+                    print('\t', name, param.shape)
+        
+        optimizer_param = filter(lambda params: params.requires_grad, model_no_ddp.model.parameters())
+        ## 现在无法解决只训练flex层没有梯度的问题 只能所有的参数都是requires_grad
+        ## 但是只更新flex层的参数
+        # if args.gradient_checkpoint:
+        #     for param in model_no_ddp.model.parameters():
+        #         param.requires_grad = True
         
         model = model.cuda(local_rank)
         if is_distributed():
@@ -548,13 +570,13 @@ def finetune_flex_opt_main(local_rank, args):
             
         if args.optimizer == 'AdamW':
             optimizer = torch.optim.AdamW(
-                filter(lambda params: params.requires_grad, model_no_ddp.model.parameters()), 
+                optimizer_param, 
                 lr=args.base_lr, 
                 weight_decay=args.weight_decay
             )
         elif args.optimizer == 'SGD':
             optimizer = torch.optim.SGD(
-                filter(lambda params: params.requires_grad, model_no_ddp.model.parameters()),
+                optimizer_param,
                 lr=args.base_lr, 
                 weight_decay=args.weight_decay
             )
@@ -564,14 +586,7 @@ def finetune_flex_opt_main(local_rank, args):
         # print("Parameters to be updated by the optimizer:")
         # for param_group in optimizer.param_groups:
         #     print(param_group['params'])
-        
-        if is_primary():
-            print('====                                          ====')
-            print('====  Only training the following parameters  ====')
-            print('====                                          ====')
-            for name, param in model_no_ddp.model.named_parameters():
-                if param.requires_grad is True:
-                    print('\t', name, param.shape)
+    
         
         loaded_epoch, best_val_metrics = resume_if_possible(
             args.checkpoint_dir, model_no_ddp.model, optimizer

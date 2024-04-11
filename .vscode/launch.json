@@ -299,8 +299,9 @@
                 "--finetune_flex_opt",
                 "--pretrained_weights","ckpts/opt-1.3b/flex/pretrain/checkpoint.pth",
                 "--load_pretrain_encoder",
-                "--base_lr" , "1e-4",
-                "--final_lr" , "1e-6",
+                "--base_lr" , "1",
+                "--final_lr" , "1",
+                "--gradient_checkpoint",
                 "--warm_lr_epochs","0"
             ],
             "env": {
@@ -360,7 +361,7 @@
                 "--detector", "detector_Vote2Cap_DETR",
                 "--captioner", "ll3da",
                 "--checkpoint_dir", "results",
-                "--test_ckpt", "ckpts/opt-1.3b/flex/test-flex-1layer-freeze-llm/checkpoint_30k.pth",
+                "--test_ckpt", "ckpts/opt-1.3b/flex/test-flex-1layer-freeze-llm/checkpoint.pth",
                 "--dataset", "unified_scanqa",
                 "--vocab", "facebook/opt-1.3b",
                 "--qformer_vocab", "bert-base-embedding",

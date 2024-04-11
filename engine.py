@@ -455,8 +455,8 @@ def do_flex_opt_finetune(
             for key in batch_data_label:
                 if not isinstance(batch_data_label[key], list):
                     batch_data_label[key] = batch_data_label[key].to(net_device)
-                    if batch_data_label[key].dtype == torch.float32:
-                        batch_data_label[key].requires_grad_(True)
+                    # if batch_data_label[key].dtype == torch.float32:
+                    #     batch_data_label[key].requires_grad_(True)
                 else:
                     batch_data_label[key] = batch_data_label[key]
             

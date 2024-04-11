@@ -147,7 +147,7 @@ class OPTAttention(nn.Module):
         self.out_proj = nn.Linear(self.embed_dim, self.embed_dim, bias=self.enable_bias)
 
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
-        return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous().requires_grad_(True)
+        return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
 
     def forward(
         self,
@@ -513,6 +513,7 @@ class OPTDecoderLayer(nn.Module):
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
+        dummy_arg = None
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -1255,9 +1256,10 @@ class FlexAttention(nn.Module):
         self.v_hr_proj = nn.Linear(self.embed_dim, self.embed_dim, bias=self.enable_bias)
         self.q_proj = nn.Linear(self.embed_dim, self.embed_dim, bias=self.enable_bias)
         self.out_proj = nn.Linear(self.embed_dim, self.embed_dim, bias=self.enable_bias)
+        
     
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
-        return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous().requires_grad_(True)
+        return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
 
     def forward(
         self,
@@ -1270,7 +1272,7 @@ class FlexAttention(nn.Module):
         hr_key_value_states: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
-
+        
         # if key_value_states are provided this layer is used as a cross-attention layer
         # for the decoder
         is_cross_attention = key_value_states is not None
@@ -1479,9 +1481,9 @@ class FlexAttention(nn.Module):
         attn_output = self.out_proj(attn_output)
         
         src_len = key_states.size(1)
-        multi_head_attn_weights = attn_weights_bf_sm.view(bsz, self.num_heads, tgt_len, src_len)
-        global_attention_map = torch.sum(multi_head_attn_weights, dim=1).detach()
-        scene_token_hidden_state = global_attention_map[:, self.config.scene_token_num:, :][:, :, :self.config.scene_token_num] #* self.config.attn_softmax_scale
+        multi_head_attn_weights = attn_weights_bf_sm.view(bsz, self.num_heads, tgt_len, src_len).contiguous()
+        global_attention_map = torch.sum(multi_head_attn_weights, dim=1)
+        scene_token_hidden_state = global_attention_map[:, self.config.scene_token_num:, :][:, :, :self.config.scene_token_num].contiguous() #* self.config.attn_softmax_scale
         scene_token_hidden_state = nn.functional.softmax(scene_token_hidden_state, dim=-1)
         
         ## text token中会有pad token，根据attn mask处理
@@ -1555,7 +1557,8 @@ class FlexOPTDecoderLayer(OPTDecoderLayer):
 
         self.self_attn = FlexAttention(config=config, is_decoder=True)
 
-        self.do_layer_norm_before = config.do_layer_norm_before
+        # self.do_layer_norm_before = config.do_layer_norm_before
+        self.do_layer_norm_before = False
         self.dropout = config.dropout
         self.activation_fn = ACT2FN[config.activation_function]
 
@@ -1567,6 +1570,7 @@ class FlexOPTDecoderLayer(OPTDecoderLayer):
         self.final_layer_norm = nn.LayerNorm(self.embed_dim, elementwise_affine=config.layer_norm_elementwise_affine)
 
         self.dense_region_selector = Dense_Region_Selector(config)
+    
         
     def forward(
         self,
@@ -1577,7 +1581,8 @@ class FlexOPTDecoderLayer(OPTDecoderLayer):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         hr_key_value_states: Optional[torch.Tensor] = None,
-        dense_pcd_info = None
+        dense_pcd_info = None,
+        dummy_arg = None
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -1594,6 +1599,8 @@ class FlexOPTDecoderLayer(OPTDecoderLayer):
                 (see `past_key_values`).
             past_key_value (`Tuple(torch.FloatTensor)`, *optional*): cached past key and value projection states
         """
+        
+        assert dummy_arg is not None 
         
         residual = hidden_states
 
@@ -1649,7 +1656,9 @@ class FlexOPTDecoderLayer(OPTDecoderLayer):
             
         hr_key_value_states = self.dense_region_selector(scene_token_hidden_state, dense_pcd_info['dense_region_tokens'])
 
-        return outputs, hr_key_value_states
+        outputs += (hr_key_value_states,)
+        
+        return outputs
     
 
 class FlexOPTDecoder(OPTDecoder):
@@ -1701,9 +1710,11 @@ class FlexOPTDecoder(OPTDecoder):
         
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
 
-        # self.gradient_checkpointing = True
+        self.gradient_checkpointing = False
         # Initialize weights and apply final processing
         self.post_init()
+        
+        self.dummy_tensor = torch.ones(1, dtype=torch.float32, requires_grad=True)
 
     def forward(
         self,
@@ -1861,25 +1872,27 @@ class FlexOPTDecoder(OPTDecoder):
 
             past_key_value = past_key_values[idx] if past_key_values is not None else None
 
-            if self.gradient_checkpointing and self.training:
-                layer_outputs = self._gradient_checkpointing_func(
-                    decoder_layer.__call__,
-                    hidden_states,
-                    causal_attention_mask,
-                    head_mask[idx] if head_mask is not None else None,
-                    None,
-                    output_attentions,
-                    use_cache,
-                )
-            else:
-                layer_outputs = decoder_layer(
-                    hidden_states,
-                    attention_mask=causal_attention_mask,
-                    layer_head_mask=(head_mask[idx] if head_mask is not None else None),
-                    past_key_value=past_key_value,
-                    output_attentions=output_attentions,
-                    use_cache=use_cache,
-                )
+            # if self.gradient_checkpointing and self.training:
+            #     layer_outputs = self._gradient_checkpointing_func(
+            #         decoder_layer.__call__,
+            #         hidden_states,
+            #         causal_attention_mask,
+            #         head_mask[idx] if head_mask is not None else None,
+            #         None,
+            #         output_attentions,
+            #         use_cache,
+            #         self.dummy_tensor
+            #     )
+            # else:
+            layer_outputs = decoder_layer(
+                hidden_states,
+                attention_mask=causal_attention_mask,
+                layer_head_mask=(head_mask[idx] if head_mask is not None else None),
+                past_key_value=past_key_value,
+                output_attentions=output_attentions,
+                use_cache=use_cache,
+                dummy_arg=self.dummy_tensor
+            )
 
             hidden_states = layer_outputs[0]
 
@@ -1889,9 +1902,11 @@ class FlexOPTDecoder(OPTDecoder):
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
         
-        hr_key_value_states = None
+        hidden_states.requires_grad_(True)
+        for k ,v in dense_pcd_info.items():
+            if v.dtype == torch.float32:
+                v.requires_grad_(True)
         for idx, decoder_layer in enumerate(self.flex_layers):
-            torch.cuda.empty_cache()
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -1903,7 +1918,7 @@ class FlexOPTDecoder(OPTDecoder):
 
             past_key_value = past_key_values[idx] if past_key_values is not None else None
 
-            if self.gradient_checkpointing and self.training:
+            if self.gradient_checkpointing and self.training :
                 layer_outputs = self._gradient_checkpointing_func(
                     decoder_layer.__call__,
                     hidden_states,
@@ -1912,8 +1927,9 @@ class FlexOPTDecoder(OPTDecoder):
                     None,
                     output_attentions,
                     use_cache,
-                    hr_key_value_states,
-                    dense_pcd_info
+                    None if idx == 0 else hr_key_value_states,
+                    dense_pcd_info,
+                    self.dummy_tensor
                 )
             else:
                 layer_outputs = decoder_layer(
@@ -1923,13 +1939,14 @@ class FlexOPTDecoder(OPTDecoder):
                     past_key_value=past_key_value,
                     output_attentions=output_attentions,
                     use_cache=use_cache,
-                    hr_key_value_states=hr_key_value_states,
-                    dense_pcd_info=dense_pcd_info
+                    hr_key_value_states=None if idx == 0 else hr_key_value_states,
+                    dense_pcd_info=dense_pcd_info,
+                    dummy_arg=self.dummy_tensor
                 )
 
             
             hr_key_value_states = layer_outputs[-1]
-            layer_outputs = layer_outputs[0]
+            # layer_outputs = layer_outputs[0]
             hidden_states = layer_outputs[0]
 
             if use_cache:
