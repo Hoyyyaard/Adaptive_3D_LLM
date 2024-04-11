@@ -361,7 +361,7 @@
                 "--detector", "detector_Vote2Cap_DETR",
                 "--captioner", "ll3da",
                 "--checkpoint_dir", "results",
-                "--test_ckpt", "ckpts/opt-1.3b/flex/test-flex-1layer-freeze-llm/checkpoint.pth",
+                "--test_ckpt", "ckpts/opt-1.3b/flex/test-flex-8layer-freeze-llm/checkpoint.pth",
                 "--dataset", "unified_scanqa",
                 "--vocab", "facebook/opt-1.3b",
                 "--qformer_vocab", "bert-base-embedding",
@@ -377,7 +377,7 @@
             ],
             "env": {
                 "PYTHONWARNINGS":"ignore:semaphore_tracker:UserWarning",
-                "CUDA_VISIBLE_DEVICES":"7",
+                "CUDA_VISIBLE_DEVICES":"0",
                 "MKL_NUM_THREADS":"1",
                 "NUMEXPR_NUM_THREADS":"1",
                 "OMP_NUM_THREADS":"1",

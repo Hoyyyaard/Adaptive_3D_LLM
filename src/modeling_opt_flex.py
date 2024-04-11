@@ -1556,8 +1556,7 @@ class FlexOPTDecoderLayer(OPTDecoderLayer):
 
         self.self_attn = FlexAttention(config=config, is_decoder=True)
 
-        # self.do_layer_norm_before = config.do_layer_norm_before
-        self.do_layer_norm_before = False
+        self.do_layer_norm_before = config.do_layer_norm_before
         self.dropout = config.dropout
         self.activation_fn = ACT2FN[config.activation_function]
 
@@ -1894,11 +1893,12 @@ class FlexOPTDecoder(OPTDecoder):
 
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
-        
+                
+                
         hidden_states.requires_grad_(True)
         for k ,v in dense_pcd_info.items():
             if v.dtype == torch.float32:
-                v.requires_grad_(True)
+                v.requires_grad_(True)        
         for idx, decoder_layer in enumerate(self.flex_layers):
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
             if output_hidden_states:
@@ -1937,7 +1937,6 @@ class FlexOPTDecoder(OPTDecoder):
 
             
             hr_key_value_states = layer_outputs[-1]
-            # layer_outputs = layer_outputs[0]
             hidden_states = layer_outputs[0]
 
             if use_cache:

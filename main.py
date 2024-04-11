@@ -408,7 +408,9 @@ def finetune_flex_opt_main(local_rank, args):
         config.num_flex_hidden_layers = 0
         print('============================freeze llm====================================')
     model = Shell_Model(config=config)
-
+    ## 由于代码上的bug 第一层的flex self attn相当于self attn
+    del model.model.model.decoder.flex_layers[0].self_attn.k_hr_proj
+    del model.model.model.decoder.flex_layers[0].self_attn.v_hr_proj
     # testing phase
     if args.test_only:
 
@@ -460,10 +462,6 @@ def finetune_flex_opt_main(local_rank, args):
         
     # training phase
     else:
-        
-        ## 由于代码上的bug 第一层的flex self attn相当于self attn
-        del model.model.model.decoder.flex_layers[0].self_attn.k_hr_proj
-        del model.model.model.decoder.flex_layers[0].self_attn.v_hr_proj
         
         if args.gradient_checkpoint:
             print('Training use gradient checkpointing...')
@@ -561,11 +559,7 @@ def finetune_flex_opt_main(local_rank, args):
                     print('\t', name, param.shape)
         
         optimizer_param = filter(lambda params: params.requires_grad, model_no_ddp.model.parameters())
-        ## 现在无法解决只训练flex层没有梯度的问题 只能所有的参数都是requires_grad
-        ## 但是只更新flex层的参数
-        # if args.gradient_checkpoint:
-        #     for param in model_no_ddp.model.parameters():
-        #         param.requires_grad = True
+       
         
         model = model.cuda(local_rank)
         if is_distributed():
