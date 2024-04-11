@@ -1,5 +1,5 @@
 export PYTHONWARNINGS='ignore:semaphore_tracker:UserWarning'
-export CUDA_VISIBLE_DEVICES=1,2,3,0,5,6,4,7
+export CUDA_VISIBLE_DEVICES=1,2,3,5,6,4,7
 export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export OMP_NUM_THREADS=1
@@ -14,12 +14,12 @@ python main.py \
     --qformer_vocab bert-base-embedding \
     --pretrained_weights ckpts/opt-1.3b/flex/pretrain/checkpoint.pth \
     --checkpoint_dir ckpts/opt-1.3b/flex/test-flex-8layer-freeze-llm\
-    --max_epoch 32 \
+    --max_epoch 2 \
     --dataset_num_workers 8 \
     --finetune_flex_opt \
     --dist_url tcp://localhost:12245 \
-    --save_every 1000 \
-    --batchsize_per_gpu 2 --ngpus 8 --base_lr 1e-5 --final_lr 1e-6 \
+    --save_every 5000 \
+    --batchsize_per_gpu 3 --ngpus 7 --base_lr 1e-5 --final_lr 1e-6 \
     --cache_dir results/debug \
     --load_pretrain_encoder \
     --gradient_checkpoint 

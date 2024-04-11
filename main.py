@@ -430,6 +430,8 @@ def finetune_flex_opt_main(local_rank, args):
             checkpoint = flex_checkpoint
         if args.test_ckpt == 'ckpts/opt-model/pytorch_model.bin':
             msg = model.model.load_state_dict(checkpoint, strict=False)
+        elif args.load_pretrain_encoder:
+            msg = model.model.load_state_dict(checkpoint['model'], strict=False)
         else:
             msg = model.model.load_state_dict(checkpoint['model'], strict=True)
         # except:
@@ -459,10 +461,14 @@ def finetune_flex_opt_main(local_rank, args):
     # training phase
     else:
         
+        ## 由于代码上的bug 第一层的flex self attn相当于self attn
+        del model.model.model.decoder.flex_layers[0].self_attn.k_hr_proj
+        del model.model.model.decoder.flex_layers[0].self_attn.v_hr_proj
+        
         if args.gradient_checkpoint:
             print('Training use gradient checkpointing...')
             # from functools import partial
-            # notfailing_checkpoint = partial(torch.utils.checkpoint.checkpoint, use_reentrant=False)
+            # notfailing_checkpoint = partial(torch.utils.checkpoint.checkpoint, use_reentrant=True)
             # torch.utils.checkpoint.checkpoint = notfailing_checkpoint
             model.model.gradient_checkpointing_enable()
             model.model.model.decoder.gradient_checkpointing = True
@@ -565,7 +571,7 @@ def finetune_flex_opt_main(local_rank, args):
         if is_distributed():
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
             model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=[local_rank] , find_unused_parameters=True
+                model, device_ids=[local_rank] , #find_unused_parameters=True
             )
             
         if args.optimizer == 'AdamW':

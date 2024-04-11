@@ -513,7 +513,6 @@ class OPTDecoderLayer(nn.Module):
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
-        dummy_arg = None
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -1582,7 +1581,6 @@ class FlexOPTDecoderLayer(OPTDecoderLayer):
         use_cache: Optional[bool] = False,
         hr_key_value_states: Optional[torch.Tensor] = None,
         dense_pcd_info = None,
-        dummy_arg = None
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -1600,7 +1598,6 @@ class FlexOPTDecoderLayer(OPTDecoderLayer):
             past_key_value (`Tuple(torch.FloatTensor)`, *optional*): cached past key and value projection states
         """
         
-        assert dummy_arg is not None 
         
         residual = hidden_states
 
@@ -1714,8 +1711,6 @@ class FlexOPTDecoder(OPTDecoder):
         # Initialize weights and apply final processing
         self.post_init()
         
-        self.dummy_tensor = torch.ones(1, dtype=torch.float32, requires_grad=True)
-
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -1881,7 +1876,6 @@ class FlexOPTDecoder(OPTDecoder):
             #         None,
             #         output_attentions,
             #         use_cache,
-            #         self.dummy_tensor
             #     )
             # else:
             layer_outputs = decoder_layer(
@@ -1891,7 +1885,6 @@ class FlexOPTDecoder(OPTDecoder):
                 past_key_value=past_key_value,
                 output_attentions=output_attentions,
                 use_cache=use_cache,
-                dummy_arg=self.dummy_tensor
             )
 
             hidden_states = layer_outputs[0]
@@ -1929,7 +1922,6 @@ class FlexOPTDecoder(OPTDecoder):
                     use_cache,
                     None if idx == 0 else hr_key_value_states,
                     dense_pcd_info,
-                    self.dummy_tensor
                 )
             else:
                 layer_outputs = decoder_layer(
@@ -1941,7 +1933,6 @@ class FlexOPTDecoder(OPTDecoder):
                     use_cache=use_cache,
                     hr_key_value_states=None if idx == 0 else hr_key_value_states,
                     dense_pcd_info=dense_pcd_info,
-                    dummy_arg=self.dummy_tensor
                 )
 
             
@@ -2021,7 +2012,7 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         super().__init__(config)
         self.model = FlexOPTModel(config)
         self.prompt_encoder = PromptEncoder()
-        self.tokenizer = AutoTokenizer.from_pretrained('facebook/opt-1.3b')
+        self.tokenizer = AutoTokenizer.from_pretrained('ckpts/opt-model')
 
         # the lm_head weight is automatically tied to the embed tokens weight
         self.lm_head = nn.Linear(config.word_embed_proj_dim, config.vocab_size, bias=False)
