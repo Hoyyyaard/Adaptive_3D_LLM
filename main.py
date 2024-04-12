@@ -135,6 +135,7 @@ def make_args_parser():
     parser.add_argument("--freeze_flex_llm", action='store_true')
     parser.add_argument("--load_pretrain_encoder", action='store_true')
     parser.add_argument("--gradient_checkpoint", action='store_true')
+    parser.add_argument("--num_flex_hidden_layers", required=True, type=int)
     
     args = parser.parse_args()
     args.use_height = not args.no_height
@@ -156,6 +157,7 @@ def make_args_parser():
     print(f'freeze_flex_llm: ', args.freeze_flex_llm)
     print(f'load_pretrain_encoder: ', args.load_pretrain_encoder)
     print(f'gradient_checkpoint: ', args.gradient_checkpoint)
+    print(f'num flex layers: ', args.num_flex_hidden_layers)
     
     return args
 
@@ -403,6 +405,10 @@ def finetune_flex_opt_main(local_rank, args):
     dataset_config, datasets, dataloaders = build_dataset(args)
     from src.modeling_opt_flex import FlexOPTForCausalLM, Shell_Model
     config = AutoConfig.from_pretrained('src/flex_opt_config.json')
+    config.num_flex_hidden_layers = args.num_flex_hidden_layers + 1
+    config.num_hidden_layers = 24 - args.num_flex_hidden_layers - 1
+    print("acc_num_flex_hidden_layers: ", config.num_flex_hidden_layers)
+    print("acc_num_hidden_layers: ", config.num_hidden_layers)
     if args.freeze_flex_llm:
         config.num_hidden_layers = config.num_flex_hidden_layers + config.num_hidden_layers
         config.num_flex_hidden_layers = 0
