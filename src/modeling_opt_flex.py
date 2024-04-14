@@ -23,6 +23,13 @@ from transformers.modeling_outputs import (
     QuestionAnsweringModelOutput,
     SequenceClassifierOutputWithPast,
 )
+
+from models.detector_Vote2Cap_DETR.transformer import (
+    MaskedTransformerEncoder, TransformerDecoder,
+    TransformerDecoderLayer, TransformerEncoder,
+    TransformerEncoderLayer
+)
+import math
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import (
     add_code_sample_docstrings,
@@ -1895,10 +1902,10 @@ class FlexOPTDecoder(OPTDecoder):
                 all_self_attns += (layer_outputs[1],)
                 
                 
-        hidden_states.requires_grad_(True)
-        for k ,v in dense_pcd_info.items():
-            if v.dtype == torch.float32:
-                v.requires_grad_(True)        
+        # hidden_states.requires_grad_(True)
+        # for k ,v in dense_pcd_info.items():
+        #     if v.dtype == torch.float32:
+        #         v.requires_grad_(True)        
         for idx, decoder_layer in enumerate(self.flex_layers):
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
             if output_hidden_states:
@@ -2015,7 +2022,11 @@ class FlexOPTForCausalLM(OPTForCausalLM):
 
         # the lm_head weight is automatically tied to the embed tokens weight
         self.lm_head = nn.Linear(config.word_embed_proj_dim, config.vocab_size, bias=False)
-        self.scene_token_in_head = nn.Linear(768+3, config.hidden_size, bias=False)
+        self.scene_token_in_head = nn.Linear(256, config.hidden_size, bias=False)
+        
+        self.encoder = self._build_ll3da_encoder()
+        self.scene_tokenizer = self._build_preencoder(npoint=2048)
+        
         # from third_party.pointnet2.pointnet2_modules import PointnetSAModuleVotes
         ## +3 means concat xyz
         # mlp_dims = [768+3, 2048]
@@ -2028,7 +2039,74 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         # )
         # Initialize weights and apply final processing
         self.post_init()
+    
+    def run_encoder(self, point_clouds, tokenizer, inds=None):
+        xyz = point_clouds[..., 0:3].contiguous()
+        features = point_clouds[..., 3:].transpose(1, 2).contiguous() if point_clouds.size(-1) > 3 else None
         
+        ## pointcloud tokenization
+        # xyz: batch x npoints x 3
+        # features: batch x channel x npoints
+        # inds: batch x npoints
+        pre_enc_xyz, pre_enc_features, pre_enc_inds = tokenizer(xyz, features, inds)
+
+        # nn.MultiHeadAttention in encoder expects npoints x batch x channel features
+        pre_enc_features = pre_enc_features.permute(2, 0, 1)
+
+        # xyz points are in batch x npointx channel order
+        enc_xyz, enc_features, enc_inds = self.encoder(
+            pre_enc_features, xyz=pre_enc_xyz
+        )
+        if enc_inds is None:
+            # encoder does not perform any downsampling
+            enc_inds = pre_enc_inds
+        else:
+            # use gather here to ensure that it works for both FPS and random sampling
+            enc_inds = torch.gather(pre_enc_inds, 1, enc_inds.long())
+        
+        enc_features = enc_features.permute(1, 0, 2)
+        
+        return enc_xyz, enc_features, enc_inds
+    
+    def _build_preencoder(self, npoint):
+        mlp_dims = [7, 64, 128, 256]
+        preencoder = PointnetSAModuleVotes(
+            radius=0.2,
+            nsample=64,
+            npoint=npoint,          ## 1024
+            mlp=mlp_dims,
+            normalize_xyz=True,
+        )
+        return preencoder
+    
+    def _build_ll3da_encoder(self):
+
+        encoder_layer = TransformerEncoderLayer(
+            d_model=256,
+            nhead=4,
+            dim_feedforward=128,
+            dropout=0.1,
+            activation='relu',
+        )
+        interim_downsampling = PointnetSAModuleVotes(
+            radius=0.4,
+            nsample=32,
+            npoint=1024 // 2,
+            mlp=[256, 256, 256, 256],
+            normalize_xyz=True,
+        )
+        
+        masking_radius = [math.pow(x, 2) for x in [0.4, 0.8, 1.2]]
+        encoder = MaskedTransformerEncoder(
+            encoder_layer=encoder_layer,
+            num_layers=3,
+            interim_downsampling=interim_downsampling,
+            masking_radius=masking_radius,
+        )
+        
+        return encoder
+    
+     
     @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
     def forward(
         self,
@@ -2138,16 +2216,15 @@ class FlexOPTForCausalLM(OPTForCausalLM):
                 attention_mask = torch.ones_like(inputs_embeds[..., 0], device=inputs_embeds.device)
                 
                 
-        ## get sparse scene object tokens from openscene_sparse_fts by set abstract layer here
+        ## 使用generate方法的时候不能传参
         if batch_data_label is None:
             batch_data_label = copy.deepcopy(self.batch_data_label)
-        pre_enc_features = self.scene_token_in_head(batch_data_label['scene_tokens'])
-        batch_data_label['dense_region_tokens'] = self.scene_token_in_head(batch_data_label['dense_region_tokens'])
-        # features = batch_data_label['openscene_sparse_fts']
-        # features = features.transpose(1, 2).contiguous()
-        # xyz = batch_data_label['openscene_sparse_pcd']
-        # pre_enc_xyz, pre_enc_features, pre_enc_inds = self.pcd_tokenizer(xyz, features)
-        # pre_enc_features = pre_enc_features.transpose(1, 2).contiguous()
+            
+        enc_xyz, enc_features, enc_inds = self.run_encoder(batch_data_label['point_clouds'], self.scene_tokenizer)     
+        pre_enc_features = self.scene_token_in_head(enc_features)
+        
+        # batch_data_label['dense_region_tokens'] = self.scene_token_in_head(batch_data_label['dense_region_tokens'])
+        
         pre_enc_features_mask = torch.ones_like(pre_enc_features[..., 0])
         
         if past_key_values is None :
@@ -2180,15 +2257,8 @@ class FlexOPTForCausalLM(OPTForCausalLM):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-            dense_pcd_info={
-                'dense_region_tokens':batch_data_label['dense_region_tokens'],
-            }
             # dense_pcd_info={
-            #     'sparse_scene_xyz':pre_enc_xyz,
-            #     'dense_scene_fts':batch_data_label['openscene_dense_fts'],
-            #     'pre_enc_inds':pre_enc_inds,
-            #     'dense_scene_xyz':batch_data_label['openscene_dense_pcd'],
-            #     'valid_pcd_len': batch_data_label['valid_pcd_len']
+            #     'dense_region_tokens':batch_data_label['dense_region_tokens'],
             # }
         )
 
@@ -2554,10 +2624,10 @@ class Shell_Model(nn.Module):
             output_ids_list = []
             for batch_id in range(input_ids.shape[0]):
                 data_label = {
-                    'dense_region_tokens': batch_data_label['dense_region_tokens'][batch_id].unsqueeze(0),
+                    # 'dense_region_tokens': batch_data_label['dense_region_tokens'][batch_id].unsqueeze(0),
                     'click_mask': batch_data_label['click_mask'][batch_id].unsqueeze(0),
                     'click_query': batch_data_label['click_query'][batch_id].unsqueeze(0),
-                    'scene_tokens': batch_data_label['scene_tokens'][batch_id].unsqueeze(0),
+                    'point_clouds': batch_data_label['point_clouds'][batch_id].unsqueeze(0),
                     'point_cloud_dims_min': batch_data_label['point_cloud_dims_min'][batch_id].unsqueeze(0),
                     'point_cloud_dims_max': batch_data_label['point_cloud_dims_max'][batch_id].unsqueeze(0),
                     }

@@ -59,7 +59,7 @@ class FusedFeatureLoader(Point3DLoader):
             raise Exception('0 file is loaded in the feature loader.')
 
         self.data_paths = [d for d in self.data_paths if d.split('/')[-1].split('_')[1] == '00']
-        pass
+        self.split='val'
 
     def __len__(self):
         return len(self.data_paths)

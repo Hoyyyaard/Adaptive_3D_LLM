@@ -72,6 +72,7 @@ def export(mesh_file, agg_file, seg_file, meta_file, label_map_file, output_file
     else:
         print("No axis alignment matrix found")
         aligned_vertices = mesh_vertices
+     
 
     # Load semantic and instance labels
     if os.path.isfile(agg_file):

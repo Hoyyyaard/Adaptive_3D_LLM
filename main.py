@@ -136,6 +136,8 @@ def make_args_parser():
     parser.add_argument("--load_pretrain_encoder", action='store_true')
     parser.add_argument("--gradient_checkpoint", action='store_true')
     parser.add_argument("--num_flex_hidden_layers", required=True, type=int)
+    ## stage1 
+    parser.add_argument("--load_ll3da_encoder", action='store_true')
     
     args = parser.parse_args()
     args.use_height = not args.no_height
@@ -158,6 +160,7 @@ def make_args_parser():
     print(f'load_pretrain_encoder: ', args.load_pretrain_encoder)
     print(f'gradient_checkpoint: ', args.gradient_checkpoint)
     print(f'num flex layers: ', args.num_flex_hidden_layers)
+    print(f'load_ll3da_encoder: ', args.load_ll3da_encoder)
     
     return args
 
@@ -403,6 +406,8 @@ def finetune_flex_opt_main(local_rank, args):
     
     ### build datasets and dataloaders
     dataset_config, datasets, dataloaders = build_dataset(args)
+    
+    ### build model
     from src.modeling_opt_flex import FlexOPTForCausalLM, Shell_Model
     config = AutoConfig.from_pretrained('src/flex_opt_config.json')
     config.num_flex_hidden_layers = args.num_flex_hidden_layers + 1
@@ -414,9 +419,12 @@ def finetune_flex_opt_main(local_rank, args):
         config.num_flex_hidden_layers = 0
         print('============================freeze llm====================================')
     model = Shell_Model(config=config)
-    ## 由于代码上的bug 第一层的flex self attn相当于self attn
-    del model.model.model.decoder.flex_layers[0].self_attn.k_hr_proj
-    del model.model.model.decoder.flex_layers[0].self_attn.v_hr_proj
+    
+    if not args.freeze_flex_llm:
+        ## 由于代码上的bug 第一层的flex self attn相当于self attn
+        del model.model.model.decoder.flex_layers[0].self_attn.k_hr_proj
+        del model.model.model.decoder.flex_layers[0].self_attn.v_hr_proj
+    
     # testing phase
     if args.test_only:
 
@@ -499,6 +507,7 @@ def finetune_flex_opt_main(local_rank, args):
                         flex_checkpoint[k.replace(find_key, f'model.decoder.flex_layers.{layer_idx}')] = v
                         flex_checkpoint.pop(k)
                 checkpoint = flex_checkpoint
+            ## stage2
             elif args.load_pretrain_encoder:
                 checkpoint = checkpoint['model']
                 replace_keys = [f'model.decoder.layers.{li+config.num_hidden_layers}' for li in range(config.num_flex_hidden_layers)]
@@ -514,6 +523,24 @@ def finetune_flex_opt_main(local_rank, args):
                         flex_checkpoint[k.replace(find_key, f'model.decoder.flex_layers.{layer_idx}')] = v
                         flex_checkpoint.pop(k)
                 checkpoint = flex_checkpoint
+            ## stage1 : pretrain ll3da encoder 
+            elif args.load_ll3da_encoder:
+                checkpoint = checkpoint['model']
+                flex_checkpoint = OrderedDict()
+                for k,v in checkpoint.items():
+                    if k.find('detector.tokenizer.') != -1:
+                        rk = k.replace('detector.tokenizer', 'scene_tokenizer')
+                        flex_checkpoint[rk] = v
+                        # flex_checkpoint.pop(k)
+                    if k.find('detector.encoder.') != -1:
+                        rk = k.replace('detector.encoder', 'encoder')
+                        flex_checkpoint[rk] = v
+                        # flex_checkpoint.pop(k)
+                ## 除了加载ll3da的encoder还要加载opt1.3b官方模型
+                opt_checkpoint = torch.load('ckpts/opt-model/pytorch_model.bin', map_location="cpu")
+                for k,v in opt_checkpoint.items():
+                    flex_checkpoint[k] = v
+                checkpoint = flex_checkpoint
             else:
                 checkpoint = checkpoint['model']
             
@@ -525,6 +552,7 @@ def finetune_flex_opt_main(local_rank, args):
             # for name, param in checkpoint.items():
             #     print('\t', name, param.shape)
             print(msg)
+        
                     
         model_no_ddp = model.cuda()
         
@@ -537,8 +565,12 @@ def finetune_flex_opt_main(local_rank, args):
         if args.freeze_flex_llm:
             assert config.num_flex_hidden_layers == 0
             for name, param in model_no_ddp.model.named_parameters():
-                if name in checkpoint.keys():
+                if name.find('prompt_encoder.') != -1 or \
+                    name.find('scene_token_in_head.') != -1:
+                    param.requires_grad_(True)
+                else:
                     param.requires_grad_(False)
+                
             
             print("---------------------Trainable parameters when freeze llm: ----------------------")
             for name, param in model_no_ddp.model.named_parameters():
@@ -549,11 +581,11 @@ def finetune_flex_opt_main(local_rank, args):
             print("---------------------freeze vision encoder----------------------")
         
         ## Only for test flex performance
-        for name, param in model_no_ddp.model.named_parameters():
-             if name.find('hr_proj') != -1:
-                param.requires_grad_(True)
-             else:
-                param.requires_grad_(False)
+        # for name, param in model_no_ddp.model.named_parameters():
+        #      if name.find('hr_proj') != -1:
+        #         param.requires_grad_(True)
+        #      else:
+        #         param.requires_grad_(False)
         
         
         if is_primary():
@@ -571,7 +603,7 @@ def finetune_flex_opt_main(local_rank, args):
         if is_distributed():
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
             model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=[local_rank] , #find_unused_parameters=True
+                model, device_ids=[local_rank] , find_unused_parameters=True
             )
             
         if args.optimizer == 'AdamW':

@@ -236,7 +236,7 @@ class Preprocess_Adaptive_Pointcloud_Dataset(ScanNetBaseDataset):
                 scene_id = anno['scene_id']
                 print(f'Scene: {scene_id} Unique id: {uid} Object name: {object_name} Object size: {object_size}')
                 
-                if object_size <= 0.01:
+                if object_size <= 0.05:
                     bbox_wireframe = open3d.geometry.LineSet.create_from_axis_aligned_bounding_box(bbox)
                     bbox_wireframe.paint_uniform_color([1, 0, 0]) 
                     objects_pcd.points= open3d.utility.Vector3dVector(ret_dcit['point_clouds'][:,:3])

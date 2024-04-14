@@ -5,14 +5,13 @@ from tqdm import tqdm
 import random
 import numpy
 
-
-with open('/home/admin/Projects/EmbodiedScan/data/small_size_object/val_small_than_1e-3.json',"r") as f:
+with open('/home/admin/Projects/EmbodiedScan/data/small_size_object/train_small_than_5e-2.json',"r") as f:
     data = json.load(f)
 
 op_list = []
 for dat in tqdm(data):
-    if not 'point_within_bbox' in dat.keys() :
-        continue
+    # if not 'point_within_bbox' in dat.keys() :
+    #     continue
     descriptions = dat['text']
     obj_name = dat['target']
     des_prompt = ''
@@ -51,5 +50,5 @@ Now please inference 2-4 detailed descriptions of this {obj_name}. Please do not
     op_list.append(dat)
 
 
-with open('/home/admin/Projects/EmbodiedScan/data/small_size_object/val_small_than_1e-3_wdes.json',"w") as f:
+with open('/home/admin/Projects/EmbodiedScan/data/small_size_object/train_small_than_5e-2_wdes.json',"w") as f:
     json.dump(op_list, f)

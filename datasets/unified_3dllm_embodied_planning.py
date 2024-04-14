@@ -140,7 +140,7 @@ class Dataset(ScanNetBaseDataset):
         
         
         if self.args.finetune_flex_opt:
-            ret_dict.update(self.openscene_fts_cache.get_openscene_scan_datas(scan_name, preprocess=self.args.token_preprocess))
+            # ret_dict.update(self.openscene_fts_cache.get_openscene_scan_datas(scan_name, preprocess=self.args.token_preprocess))
             ret_dict['scan_name'] = scan_name
         return ret_dict
    

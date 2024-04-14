@@ -32,7 +32,7 @@
   "num_flex_hidden_layers": 9,
   "attn_softmax_scale": 100,
 
-  "scene_token_num": 512,
+  "scene_token_num": 1024,
   "scene_token_sample_radius": 0.5,
   "scene_token_sample_num_per_ball": 128,
 

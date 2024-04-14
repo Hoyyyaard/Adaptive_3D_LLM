@@ -1,5 +1,5 @@
 export PYTHONWARNINGS='ignore:semaphore_tracker:UserWarning'
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7
 export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export OMP_NUM_THREADS=1
@@ -13,14 +13,16 @@ python main.py \
     --dataset unified_3dllm_scene_description,unified_3dllm_embodied_dialogue,unified_3dllm_embodied_planning,unified_scanqa,unified_densecap_nr3d,unified_densecap_scanrefer \
     --vocab facebook/opt-1.3b \
     --qformer_vocab bert-base-embedding \
-    --checkpoint_dir ./ckpts/opt-1.3b/ll3da-generalist \
+    --checkpoint_dir ./ckpts/opt-1.3b/ll3da-generalist-scene_token_512 \
     --max_epoch 32 \
     --dist_url tcp://localhost:12345 \
     --eval_every_iteration 10000 \
-    --start_eval_after 19999 \
+    --start_eval_after 29999 \
     --save_every 10000 \
     --criterion 'CiDEr' \
-    --freeze_detector --freeze_llm \
-    --batchsize_per_gpu 4 --ngpus 8 --base_lr 1e-4 --final_lr 1e-6 \
+    --freeze_llm \
+    --batchsize_per_gpu 4 --ngpus 7 --base_lr 1e-4 --final_lr 1e-6 \
     --max_des_len 512 \
-    --max_prompt 1 --use_beam_search
+    --max_prompt 1 --use_beam_search \
+    --cache_dir results/debug \
+    --num_flex_hidden_layers 0 \

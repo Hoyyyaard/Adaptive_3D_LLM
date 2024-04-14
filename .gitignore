@@ -20,3 +20,5 @@ src/openscene/demo
 src/openscene/results/
 src/openscene/ckpts
 None
+data/scannet/scannet_data_w_sm_obj
+data/scannet/scannet_data_w_sm_obj_dense

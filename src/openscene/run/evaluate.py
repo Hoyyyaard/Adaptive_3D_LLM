@@ -281,12 +281,16 @@ def evaluate(model, val_data_loader, labelset_name='scannet_3d'):
                 masks = []
 
             for i, (coords, feat, label, feat_3d, mask, inds_reverse) in enumerate(tqdm(val_data_loader)):
+                
                 sinput = SparseTensor(feat.cuda(non_blocking=True), coords.cuda(non_blocking=True))
                 coords = coords[inds_reverse, :]
                 pcl = coords[:, 1:].cpu().numpy()
 
                 if feature_type == 'distill':
+                    import time
+                    st = time.time()
                     predictions = model(sinput)
+                    print(f'shape:{sinput.shape} time:', time.time()-st)
                     predictions = predictions[inds_reverse, :]
                     pred = predictions.half() @ text_features.t()
                     logits_pred = torch.max(pred, 1)[1].cpu()

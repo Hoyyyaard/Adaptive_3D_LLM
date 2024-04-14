@@ -221,14 +221,14 @@
             "name": "openscene eval",
             "type": "python",
             "request": "launch",
-            "program": "run/evaluate.py",
-            "cwd":"src/openscene",
+            "program": "run/preprocess.py",
+            "cwd":"/home/admin/Projects/LL3DA/src/openscene",
             "console": "integratedTerminal",
             "justMyCode": true,
             "python": "/home/admin/micromamba/envs/ll3da/bin/python",
             "args": [
-                "--config","config/scannet/ours_lseg_pretrained.yaml",
-                "feature_type", "distill",
+                "--config","config/scannet/ours_openseg_pretrained.yaml",
+                "feature_type", "ensemble",
                 "save_folder", "results",
                 
             ],
@@ -297,16 +297,17 @@
                 "--ngpus", "1",
                 "--cache_dir", "results/debug",
                 "--finetune_flex_opt",
-                "--pretrained_weights","ckpts/opt-1.3b/flex/pretrain/checkpoint.pth",
-                "--load_pretrain_encoder",
+                "--pretrained_weights","ckpts/opt-1.3b/ll3da-gen-512st/checkpoint_best.pth",
+                "--load_ll3da_encoder",
+                "--freeze_flex_llm",
+                "--num_flex_hidden_layers","0",
                 "--base_lr" , "1",
                 "--final_lr" , "1",
-                "--gradient_checkpoint",
-                "--warm_lr_epochs","0"
+
             ],
             "env": {
                 "PYTHONWARNINGS":"ignore:semaphore_tracker:UserWarning",
-                "CUDA_VISIBLE_DEVICES":"0",
+                "CUDA_VISIBLE_DEVICES":"1",
                 "MKL_NUM_THREADS":"1",
                 "NUMEXPR_NUM_THREADS":"1",
                 "OMP_NUM_THREADS":"1",
@@ -335,7 +336,7 @@
                 "--cache_dir", "results/debug",
                 "--finetune_flex_opt",
                 "--pretrained_weights","ckpts/opt-model/pytorch_model.bin",
-                "--token_preprocess"
+                "--token_preprocess",
 
             ],
             "env": {
@@ -361,7 +362,7 @@
                 "--detector", "detector_Vote2Cap_DETR",
                 "--captioner", "ll3da",
                 "--checkpoint_dir", "results",
-                "--test_ckpt", "ckpts/opt-1.3b/flex/test-flex-8layer-freeze-llm/checkpoint.pth",
+                "--test_ckpt", "ckpts/opt-1.3b/flex/pretrain-ll3da-encoder/checkpoint.pth",
                 "--dataset", "unified_scanqa",
                 "--vocab", "facebook/opt-1.3b",
                 "--qformer_vocab", "bert-base-embedding",
@@ -373,6 +374,9 @@
                 "--log_dir", "results/debug",
                 "--cache_dir","results/debug",
                 "--finetune_flex_opt",
+                "--freeze_flex_llm",
+                "--num_flex_hidden_layers","0",
+                "--load_pretrain_encoder"
 
             ],
             "env": {

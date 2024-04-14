@@ -368,7 +368,7 @@ def build_preencoder(cfg):
     preencoder = PointnetSAModuleVotes(
         radius=0.2,
         nsample=64,
-        npoint=cfg.preenc_npoints,
+        npoint=cfg.preenc_npoints,          ## 2048
         mlp=mlp_dims,
         normalize_xyz=True,
     )

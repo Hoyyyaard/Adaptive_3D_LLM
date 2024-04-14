@@ -388,7 +388,7 @@ class ScanNetBaseDataset(Dataset):
 
 
     def _get_scan_data_adaptive(self, scan_name):
-        mesh_vertices = np.load(os.path.join(f'{self.data_path}_dense', scan_name) + "_aligned_vert.npy")
+        mesh_vertices = np.load(os.path.join(f'{self.data_path}_w_sm_obj_dense', scan_name) + "_aligned_vert.npy")
         instance_labels = np.load(
             os.path.join(f'{self.data_path}_dense', scan_name) + "_ins_label.npy"
         )

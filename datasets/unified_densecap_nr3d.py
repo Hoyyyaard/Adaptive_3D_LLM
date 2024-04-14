@@ -152,8 +152,6 @@ class Dataset(ScanNetBaseDataset):
     def __getitem__(self, idx):
         
         scan_name = self.annotations[idx]['scene_id']
-        object_id = self.annotations[idx]['object_id']
-        object_name = self.annotations[idx]['object_name']
         task_name = self.annotations[idx]['task_name']
         ret_dict = self._get_scan_data(scan_name)
         
@@ -166,7 +164,8 @@ class Dataset(ScanNetBaseDataset):
         qformer_inputs = self.qtokenizer.batch_encode_plus([prompt['instruction']], **self.tokenizer_config)
         
         if self.split == 'train':
-            
+            object_id = self.annotations[idx]['object_id']
+            object_name = self.annotations[idx]['object_name']
             target_obj_id = int(self.annotations[idx]['object_id'])
             caption = ' '.join(self.annotations[idx]['token'])
             
@@ -261,7 +260,7 @@ class Dataset(ScanNetBaseDataset):
         ret_dict['qformer_attention_mask'] = qformer_inputs['attention_mask'][0].astype(np.float32)
         
         if self.args.finetune_flex_opt:
-            ret_dict.update(self.openscene_fts_cache.get_openscene_scan_datas(scan_name,preprocess=self.args.token_preprocess))
+            # ret_dict.update(self.openscene_fts_cache.get_openscene_scan_datas(scan_name,preprocess=self.args.token_preprocess))
             ret_dict['scan_name'] = scan_name
             
         return ret_dict
