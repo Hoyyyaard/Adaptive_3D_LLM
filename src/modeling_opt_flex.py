@@ -1,5 +1,6 @@
 from typing import List, Optional, Tuple, Union
 import copy
+import os
 import torch
 import heapq, time
 from torch import Tensor
@@ -2220,6 +2221,23 @@ class FlexOPTForCausalLM(OPTForCausalLM):
             # }
         )
 
+        ## save attn results
+        ## [layer_num(24), num_head(32), seq_len(512+n), seq_len(512+n)]
+        # assert outputs['attentions'][0].shape[0] == 1
+        # attn = torch.cat(outputs['attentions'], dim=0)
+        # task_name = batch_data_label['task_name']
+        # attn_dict = {
+        #     'attn_weight' : attn,
+        #     'xyz' : batch_data_label['scene_xyz'],
+        #     'scan_idx' : batch_data_label['scan_idx'],
+        #     'scan_name': batch_data_label['scan_name']
+        # }
+        # op_path = f'results/attn_vis/{task_name}'
+        # if not os.path.exists(op_path):
+        #     os.makedirs(op_path)
+        # scan_idx = batch_data_label['scan_idx']
+        # torch.save(attn_dict, f'{op_path}/{scan_idx.item()}.pt')
+        
         logits = self.lm_head(outputs[0])
         # labels = batch_data_label['input_ids']
 
