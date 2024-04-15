@@ -65,7 +65,7 @@ class Dataset(ScanNetBaseDataset):
         assert split_set in ["train", "val"]
         
         
-        self.annotations = os.listdir('tmp/scannet/scans')
+        self.annotations = os.listdir('/mnt/nfs/share/datasets/scannet/scans')
         print(self.annotations)
         
         # self._tag_dataset(self.annotations, 'qa')

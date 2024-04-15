@@ -314,6 +314,15 @@ def evaluate(model, val_data_loader, labelset_name='scannet_3d'):
 
                     predictions = model(sinput)
                     predictions = predictions[inds_reverse, :]
+                    
+                    op_dir = f'/mnt/nfs/share/Adaptive/openscene_dense_fts_ensemble'
+                    np.save(f'{op_dir}/{scan_name[0]}_dense_fts.npy', predictions.cpu().numpy())
+                    torch.save(locs_in, f'{op_dir}/{scan_name[0]}_xyz.pt')
+                    torch.save(feat, f'{op_dir}/{scan_name[0]}_color.pt')
+                    torch.save(inds_reverse, f'{op_dir}/{scan_name[0]}_inds_reverse.pt')
+                    
+                    continue
+                    
                     # pred_distill = predictions.half() @ text_features.t()
                     pred_distill = (predictions/(predictions.norm(dim=-1, keepdim=True)+1e-5)).half() @ text_features.t()
 

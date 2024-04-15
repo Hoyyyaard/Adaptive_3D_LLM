@@ -414,9 +414,10 @@ def finetune_flex_opt_main(local_rank, args):
         config.num_flex_hidden_layers = 0
         print('============================freeze llm====================================')
     model = Shell_Model(config=config)
-    ## 由于代码上的bug 第一层的flex self attn相当于self attn
-    del model.model.model.decoder.flex_layers[0].self_attn.k_hr_proj
-    del model.model.model.decoder.flex_layers[0].self_attn.v_hr_proj
+    if not args.freeze_flex_llm:
+        ## 由于代码上的bug 第一层的flex self attn相当于self attn
+        del model.model.model.decoder.flex_layers[0].self_attn.k_hr_proj
+        del model.model.model.decoder.flex_layers[0].self_attn.v_hr_proj
     # testing phase
     if args.test_only:
 
@@ -549,11 +550,11 @@ def finetune_flex_opt_main(local_rank, args):
             print("---------------------freeze vision encoder----------------------")
         
         ## Only for test flex performance
-        for name, param in model_no_ddp.model.named_parameters():
-             if name.find('hr_proj') != -1:
-                param.requires_grad_(True)
-             else:
-                param.requires_grad_(False)
+        # for name, param in model_no_ddp.model.named_parameters():
+        #      if name.find('hr_proj') != -1:
+        #         param.requires_grad_(True)
+        #      else:
+        #         param.requires_grad_(False)
         
         
         if is_primary():

@@ -15,6 +15,11 @@ from transformers import (
     InstructBlipQFormerModel,
     InstructBlipQFormerConfig
 )
+from models.detector_Vote2Cap_DETR.transformer import (
+    MaskedTransformerEncoder, TransformerDecoder,
+    TransformerDecoderLayer, TransformerEncoder,
+    TransformerEncoderLayer
+)
 from transformers.activations import ACT2FN
 from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask
 from transformers.modeling_outputs import (
@@ -2010,25 +2015,46 @@ class FlexOPTForCausalLM(OPTForCausalLM):
     def __init__(self, config):
         super().__init__(config)
         self.model = FlexOPTModel(config)
-        self.prompt_encoder = PromptEncoder()
+        # self.prompt_encoder = PromptEncoder()
         self.tokenizer = AutoTokenizer.from_pretrained('ckpts/opt-model')
 
         # the lm_head weight is automatically tied to the embed tokens weight
         self.lm_head = nn.Linear(config.word_embed_proj_dim, config.vocab_size, bias=False)
         self.scene_token_in_head = nn.Linear(768+3, config.hidden_size, bias=False)
-        # from third_party.pointnet2.pointnet2_modules import PointnetSAModuleVotes
-        ## +3 means concat xyz
-        # mlp_dims = [768+3, 2048]
-        # self.pcd_tokenizer = PointnetSAModuleVotes(
-        #     radius=config.scene_token_sample_radius,
-        #     nsample=config.scene_token_sample_num_per_ball,
-        #     npoint=config.scene_token_num,
-        #     mlp=mlp_dims,
-        #     normalize_xyz=True,
-        # )
-        # Initialize weights and apply final processing
+        self.encoder = self._build_mask_transformer_encoder(config)
+
         self.post_init()
+    
+    def _build_mask_transformer_encoder(self, config):
+        import math
+        encoder_layer = TransformerEncoderLayer(
+            d_model=config.hidden_size,
+            nhead=4,
+            dim_feedforward=128,
+            dropout=0.1,
+            activation='relu',
+        )
         
+        masking_radius = [math.pow(x, 2) for x in [0.4, 0.8, 1.2]]
+        encoder = MaskedTransformerEncoder(
+            encoder_layer=encoder_layer,
+            num_layers=3,
+            masking_radius=masking_radius,
+            interim_downsampling=None
+        )
+        
+        return encoder
+    
+    def _run_mask_tranformer_encoder(self, scene_tokens, xyz):
+        pre_enc_features = self.scene_token_in_head(scene_tokens)
+        ## expects npoints x batch x channel features
+        pre_enc_features = pre_enc_features.permute(1, 0, 2)
+        enc_xyz, enc_features, enc_inds = self.encoder(
+            pre_enc_features, xyz=xyz
+        )
+        enc_features = enc_features.permute(1, 0, 2)
+        return enc_features
+    
     @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
     def forward(
         self,
@@ -2141,8 +2167,10 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         ## get sparse scene object tokens from openscene_sparse_fts by set abstract layer here
         if batch_data_label is None:
             batch_data_label = copy.deepcopy(self.batch_data_label)
-        pre_enc_features = self.scene_token_in_head(batch_data_label['scene_tokens'])
-        batch_data_label['dense_region_tokens'] = self.scene_token_in_head(batch_data_label['dense_region_tokens'])
+        pre_enc_features = self._run_mask_tranformer_encoder(batch_data_label['scene_tokens'], batch_data_label['scene_xyz'])
+        # batch_data_label['dense_region_tokens'] = self._run_mask_tranformer_encoder(batch_data_label['dense_region_tokens'].view(-1, 10, 771), batch_data_label['dense_region_xyz'].view(-1, 10, 3))
+        # batch_data_label['dense_region_tokens'] = batch_data_label['dense_region_tokens'].view(-1, 512, 10 ,2048)
+        
         # features = batch_data_label['openscene_sparse_fts']
         # features = features.transpose(1, 2).contiguous()
         # xyz = batch_data_label['openscene_sparse_pcd']
@@ -2151,23 +2179,23 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         pre_enc_features_mask = torch.ones_like(pre_enc_features[..., 0])
         
         if past_key_values is None :
-            if batch_data_label['click_mask'][0, 0].item() == 1:
-                click_query = batch_data_label['click_query'][:, 0, :]
-                click_query = click_query.unsqueeze(1)
-                point_cloud_dims = [
-                    batch_data_label["point_cloud_dims_min"],
-                    batch_data_label["point_cloud_dims_max"],
-                ]
-                prompt_embeds = self.prompt_encoder(point_cloud_dims, click_query)
-                prompt_mask = torch.ones_like(prompt_embeds[..., 0])
+            # if batch_data_label['click_mask'][0, 0].item() == 1:
+            #     click_query = batch_data_label['click_query'][:, 0, :]
+            #     click_query = click_query.unsqueeze(1)
+            #     point_cloud_dims = [
+            #         batch_data_label["point_cloud_dims_min"],
+            #         batch_data_label["point_cloud_dims_max"],
+            #     ]
+            #     prompt_embeds = self.prompt_encoder(point_cloud_dims, click_query)
+            #     prompt_mask = torch.ones_like(prompt_embeds[..., 0])
                 
-                inputs_embeds = torch.cat([pre_enc_features, prompt_embeds, inputs_embeds], dim=1)
-                attention_mask = torch.cat([pre_enc_features_mask, prompt_mask, attention_mask], dim=1)
-                self.prefix_len = pre_enc_features.shape[1] + prompt_embeds.shape[1]
-            else:
-                inputs_embeds = torch.cat([pre_enc_features, inputs_embeds], dim=1)
-                attention_mask = torch.cat([pre_enc_features_mask, attention_mask], dim=1)
-                self.prefix_len = pre_enc_features.shape[1]
+            #     inputs_embeds = torch.cat([pre_enc_features, prompt_embeds, inputs_embeds], dim=1)
+            #     attention_mask = torch.cat([pre_enc_features_mask, prompt_mask, attention_mask], dim=1)
+            #     self.prefix_len = pre_enc_features.shape[1] + prompt_embeds.shape[1]
+            # else:
+            inputs_embeds = torch.cat([pre_enc_features, inputs_embeds], dim=1)
+            attention_mask = torch.cat([pre_enc_features_mask, attention_mask], dim=1)
+            self.prefix_len = pre_enc_features.shape[1]
         
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model.decoder(
@@ -2243,9 +2271,9 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         
         import os
-        self.scan_name_list = os.listdir('/mnt/nfs/share/Adaptive/openscene_scene_tokens')
+        self.scan_name_list = os.listdir('/mnt/nfs/share/Adaptive/openscene_scene_tokens_ensemble1_r_0.25_10_0.02_128')
         scan_name = batch_data_label['scan_name'][0]
-        ot_dir = f'/mnt/nfs/share/Adaptive/openscene_scene_tokens/{scan_name}'
+        ot_dir = f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_ensemble1_r_0.25_10_0.02_128/{scan_name}'
         if not os.path.exists(ot_dir):
             os.makedirs(ot_dir, exist_ok=True)
         from third_party.pointnet2.pointnet2_modules import  PointnetSAModuleVotes_WoMlp
@@ -2558,6 +2586,9 @@ class Shell_Model(nn.Module):
                     'click_mask': batch_data_label['click_mask'][batch_id].unsqueeze(0),
                     'click_query': batch_data_label['click_query'][batch_id].unsqueeze(0),
                     'scene_tokens': batch_data_label['scene_tokens'][batch_id].unsqueeze(0),
+                    'scene_xyz': batch_data_label['scene_xyz'][batch_id].unsqueeze(0),
+                    'dense_region_tokens': batch_data_label['dense_region_tokens'][batch_id].unsqueeze(0),
+                    'dense_region_xyz': batch_data_label['dense_region_xyz'][batch_id].unsqueeze(0),
                     'point_cloud_dims_min': batch_data_label['point_cloud_dims_min'][batch_id].unsqueeze(0),
                     'point_cloud_dims_max': batch_data_label['point_cloud_dims_max'][batch_id].unsqueeze(0),
                     }

@@ -33,14 +33,14 @@
   "attn_softmax_scale": 100,
 
   "scene_token_num": 512,
-  "scene_token_sample_radius": 0.5,
+  "scene_token_sample_radius": 0.4,
   "scene_token_sample_num_per_ball": 128,
 
-  "region_radius": 0.5,
+  "region_radius": 0.25,
   "region_sample_num": 5000,
-  "region_token_sample_num": 32,
+  "region_token_sample_num": 10,
   "region_token_sample_radius": 0.02,
-  "region_token_sample_num_per_ball": 64,
+  "region_token_sample_num_per_ball": 128,
 
   "use_flex_layer": true
 

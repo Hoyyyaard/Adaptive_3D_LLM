@@ -5,7 +5,9 @@ data/scannetpp_data_download
 data/ScanQA
 data/ScanRefer
 data/scannet/scannet_data
+data/scannet/scannet_data_w_sm_obj
 data/scannet/scannet_data_dense
+data/scannet/scannet_data_w_sm_obj_dense
 results
 pretrained
 ckpts
@@ -20,3 +22,4 @@ src/openscene/demo
 src/openscene/results/
 src/openscene/ckpts
 None
+.vscode

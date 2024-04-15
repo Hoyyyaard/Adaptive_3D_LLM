@@ -7,14 +7,14 @@ import os
 
 
 class OpenScene_Fts_Cache():
-    def __init__(self, cache_dir='/mnt/nfs/share/Adaptive/openscene_dense_fts_distill'):
+    def __init__(self, cache_dir='/mnt/nfs/share/Adaptive/openscene_dense_fts_ensemble'):
         self.cache_dir = cache_dir
         self.dense_fts_cache = {}
         self.npoint = 40000
         self.pad_npoint = 200000
     
     def _get_dense_fts(self, scan_name):
-        return torch.load(os.path.join(self.cache_dir, scan_name + '_dense_fts.pt'), map_location='cpu').numpy()
+        return np.load(os.path.join(self.cache_dir, scan_name + '_dense_fts.npy'))
     
     def _get_dense_pcd(self, scan_name):
         return torch.load(os.path.join(self.cache_dir, scan_name + '_xyz.pt'), map_location='cpu').numpy()
@@ -53,13 +53,19 @@ class OpenScene_Fts_Cache():
             
             return output_dict
         else:
-            cache_dir = f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_r_0.25_10_0.02_128/{scan_name}'
+            cache_dir = f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_ensemble_r_0.25_10_0.02_128/{scan_name}'
             scene_tokens = torch.load(f'{cache_dir}/enc_features.pt', map_location='cpu').numpy().astype(np.float32),
             scene_tokens = scene_tokens[0][0]
+            scene_xyz = torch.load(f'{cache_dir}/enc_xyz.pt', map_location='cpu').numpy().astype(np.float32)
+            scene_xyz = scene_xyz[0]
             dense_region_tokens = [torch.load(f'{cache_dir}/region_features_{i}.pt', map_location='cpu') for i in range(scene_tokens.shape[0])]
             dense_region_tokens = torch.cat(dense_region_tokens, dim=0).numpy().astype(np.float32)
+            dense_region_xyz = [torch.load(f'{cache_dir}/region_xyz_{i}.pt', map_location='cpu') for i in range(scene_tokens.shape[0])]
+            dense_region_xyz = torch.cat(dense_region_xyz, dim=0).numpy().astype(np.float32)
             return {
                 'scene_tokens': scene_tokens,
-                'dense_region_tokens': dense_region_tokens
+                'scene_xyz': scene_xyz,
+                'dense_region_tokens': dense_region_tokens,
+                'dense_region_xyz': dense_region_xyz
             }
     

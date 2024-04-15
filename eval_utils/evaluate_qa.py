@@ -123,6 +123,8 @@ def evaluate(
             'qformer_attention_mask': batch_data_label['qformer_attention_mask'],
             'instruction': batch_data_label['instruction'],
             'instruction_mask': batch_data_label['instruction_mask'],
+            'scan_idx' : batch_data_label['scan_idx'],
+            'scan_name' : batch_data_label['scan_name']
         }
         if os.getenv("adaptive_pcd_input", False) == "True":
             model_input['sample_prob'] = batch_data_label['sample_prob']
