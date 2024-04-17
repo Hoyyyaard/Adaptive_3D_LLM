@@ -1307,7 +1307,7 @@ class FlexAttention(nn.Module):
             value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
             # key_states = self.k_proj(hidden_states)
             # value_states = self.v_proj(hidden_states)
-            if hr_key_value_states is not None:
+            if hr_key_value_states is not None and hasattr(self,"k_hr_proj"):
                 ## TODO: inference
                 
                 # hr_key_value_states.requires_grad_(True)
@@ -1704,10 +1704,10 @@ class FlexOPTDecoder(OPTDecoder):
 
         if config.use_flex_layer:
             self.layers = nn.ModuleList([OPTDecoderLayer(config) for _ in range(config.num_hidden_layers)])
-            self.flex_layers = nn.ModuleList([FlexOPTDecoderLayer(config) for _ in range(config.num_flex_hidden_layers)])
+            self.flex_layers = nn.ModuleList([FlexOPTDecoderLayer(config) for _ in range(config.num_finetune_hidden_layers)])
         else:
             print("warning!!! do not use flex layer")
-            self.layers = nn.ModuleList([OPTDecoderLayer(config) for _ in range(config.num_hidden_layers+config.num_flex_hidden_layers)])
+            self.layers = nn.ModuleList([OPTDecoderLayer(config) for _ in range(config.num_hidden_layers+config.num_finetune_hidden_layers)])
             self.flex_layers = []
         
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
@@ -2016,7 +2016,7 @@ class FlexOPTForCausalLM(OPTForCausalLM):
     def __init__(self, config):
         super().__init__(config)
         self.model = FlexOPTModel(config)
-        # self.prompt_encoder = PromptEncoder()
+        self.prompt_encoder = PromptEncoder()
         self.tokenizer = AutoTokenizer.from_pretrained('ckpts/opt-model')
 
         # the lm_head weight is automatically tied to the embed tokens weight
@@ -2169,8 +2169,8 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         if batch_data_label is None:
             batch_data_label = copy.deepcopy(self.batch_data_label)
         pre_enc_features = self._run_mask_tranformer_encoder(batch_data_label['scene_tokens'], batch_data_label['scene_xyz'])
-        # batch_data_label['dense_region_tokens'] = self._run_mask_tranformer_encoder(batch_data_label['dense_region_tokens'].view(-1, 10, 771), batch_data_label['dense_region_xyz'].view(-1, 10, 3))
-        # batch_data_label['dense_region_tokens'] = batch_data_label['dense_region_tokens'].view(-1, 512, 10 ,2048)
+        batch_data_label['dense_region_tokens'] = self._run_mask_tranformer_encoder(batch_data_label['dense_region_tokens'].view(-1, 10, 771), batch_data_label['dense_region_xyz'].view(-1, 10, 3))
+        batch_data_label['dense_region_tokens'] = batch_data_label['dense_region_tokens'].view(-1, 512, 10 ,2048)
         
         # features = batch_data_label['openscene_sparse_fts']
         # features = features.transpose(1, 2).contiguous()
@@ -2180,23 +2180,23 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         pre_enc_features_mask = torch.ones_like(pre_enc_features[..., 0])
         
         if past_key_values is None :
-            # if batch_data_label['click_mask'][0, 0].item() == 1:
-            #     click_query = batch_data_label['click_query'][:, 0, :]
-            #     click_query = click_query.unsqueeze(1)
-            #     point_cloud_dims = [
-            #         batch_data_label["point_cloud_dims_min"],
-            #         batch_data_label["point_cloud_dims_max"],
-            #     ]
-            #     prompt_embeds = self.prompt_encoder(point_cloud_dims, click_query)
-            #     prompt_mask = torch.ones_like(prompt_embeds[..., 0])
+            if batch_data_label['click_mask'][0, 0].item() == 1:
+                click_query = batch_data_label['click_query'][:, 0, :]
+                click_query = click_query.unsqueeze(1)
+                point_cloud_dims = [
+                    batch_data_label["point_cloud_dims_min"],
+                    batch_data_label["point_cloud_dims_max"],
+                ]
+                prompt_embeds = self.prompt_encoder(point_cloud_dims, click_query)
+                prompt_mask = torch.ones_like(prompt_embeds[..., 0])
                 
-            #     inputs_embeds = torch.cat([pre_enc_features, prompt_embeds, inputs_embeds], dim=1)
-            #     attention_mask = torch.cat([pre_enc_features_mask, prompt_mask, attention_mask], dim=1)
-            #     self.prefix_len = pre_enc_features.shape[1] + prompt_embeds.shape[1]
-            # else:
-            inputs_embeds = torch.cat([pre_enc_features, inputs_embeds], dim=1)
-            attention_mask = torch.cat([pre_enc_features_mask, attention_mask], dim=1)
-            self.prefix_len = pre_enc_features.shape[1]
+                inputs_embeds = torch.cat([pre_enc_features, prompt_embeds, inputs_embeds], dim=1)
+                attention_mask = torch.cat([pre_enc_features_mask, prompt_mask, attention_mask], dim=1)
+                self.prefix_len = pre_enc_features.shape[1] + prompt_embeds.shape[1]
+            else:
+                inputs_embeds = torch.cat([pre_enc_features, inputs_embeds], dim=1)
+                attention_mask = torch.cat([pre_enc_features_mask, attention_mask], dim=1)
+                self.prefix_len = pre_enc_features.shape[1]
         
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model.decoder(
@@ -2289,9 +2289,9 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         
         import os
-        self.scan_name_list = os.listdir('/mnt/nfs/share/Adaptive/openscene_scene_tokens_ensemble1_r_0.25_10_0.02_128')
+        self.scan_name_list = os.listdir('/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_w_sm_obj_0.2_r_0.25_10_0.05_500')
         scan_name = batch_data_label['scan_name'][0]
-        ot_dir = f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_ensemble1_r_0.25_10_0.02_128/{scan_name}'
+        ot_dir = f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_w_sm_obj_0.2_r_0.25_10_0.05_500/{scan_name}'
         if not os.path.exists(ot_dir):
             os.makedirs(ot_dir, exist_ok=True)
         from third_party.pointnet2.pointnet2_modules import  PointnetSAModuleVotes_WoMlp
@@ -2368,6 +2368,8 @@ class FlexOPTForCausalLM(OPTForCausalLM):
             torch.save(pre_reg_xyz, f'{ot_dir}/region_xyz_{ri}.pt')
             torch.save(pre_reg_features.transpose(1,2), f'{ot_dir}/region_features_{ri}.pt')
             
+        assert len(os.listdir(ot_dir)) == 512 * 3 + 3
+            
             # dense_vis_pcd = open3d.geometry.PointCloud()
             # dense_vis_pcd.points = open3d.utility.Vector3dVector(dense_scene_xyz[0].cpu().numpy())
             # colors = np.ones_like(dense_scene_xyz[0].cpu().numpy()) * 0.8
@@ -2379,7 +2381,7 @@ class FlexOPTForCausalLM(OPTForCausalLM):
             # select_vis_pcd.colors = open3d.utility.Vector3dVector(colors)
             # open3d.visualization.draw_geometries([dense_vis_pcd, select_vis_pcd])
             # open3d.visualization.draw_geometries([select_vis_pcd])
-            pass
+
 
 @torch.no_grad()
 def greedy_decode(transformer: Callable, **kwargs) -> Tensor:

@@ -152,8 +152,7 @@ class Dataset(ScanNetBaseDataset):
     def __getitem__(self, idx):
         
         scan_name = self.annotations[idx]['scene_id']
-        object_id = self.annotations[idx]['object_id']
-        object_name = self.annotations[idx]['object_name']
+
         task_name = self.annotations[idx]['task_name']
         ret_dict = self._get_scan_data(scan_name)
         
@@ -161,11 +160,14 @@ class Dataset(ScanNetBaseDataset):
             prompt = deepcopy(random.choice(TASK_PROPMT[task_name]))
         else:
             prompt = deepcopy(TASK_PROPMT[task_name][0])
+        
             
         prompt_inputs = self.tokenizer.batch_encode_plus([prompt['instruction']], **self.tokenizer_config)
         qformer_inputs = self.qtokenizer.batch_encode_plus([prompt['instruction']], **self.tokenizer_config)
         
         if self.split == 'train':
+            object_id = self.annotations[idx]['object_id']
+            object_name = self.annotations[idx]['object_name']
             
             target_obj_id = int(self.annotations[idx]['object_id'])
             caption = ' '.join(self.annotations[idx]['token'])

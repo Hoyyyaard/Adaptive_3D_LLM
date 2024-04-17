@@ -7,7 +7,7 @@ import os
 
 
 class OpenScene_Fts_Cache():
-    def __init__(self, cache_dir='/mnt/nfs/share/Adaptive/openscene_dense_fts_ensemble'):
+    def __init__(self, cache_dir='/mnt/nfs/share/Adaptive/openscene_dense_fts_distill_axis_align_w_sm_obj'):
         self.cache_dir = cache_dir
         self.dense_fts_cache = {}
         self.npoint = 40000
@@ -53,7 +53,7 @@ class OpenScene_Fts_Cache():
             
             return output_dict
         else:
-            cache_dir = f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_ensemble_r_0.25_10_0.02_128/{scan_name}'
+            cache_dir = f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_w_sm_obj_0.2_r_0.25_10_0.05_500/{scan_name}'
             scene_tokens = torch.load(f'{cache_dir}/enc_features.pt', map_location='cpu').numpy().astype(np.float32),
             scene_tokens = scene_tokens[0][0]
             scene_xyz = torch.load(f'{cache_dir}/enc_xyz.pt', map_location='cpu').numpy().astype(np.float32)

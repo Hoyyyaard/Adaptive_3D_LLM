@@ -77,6 +77,40 @@ class FusedFeatureLoader(Point3DLoader):
                 feats_in = np.zeros_like(locs_in)
             else:
                 feats_in = (feats_in + 1.) * 127.5
+                
+                ## openscene 的坐标没有转换到scannet
+                import open3d
+                scan_name = self.data_paths[index][:-15].split('/')[-1]
+                meta_file = f'/mnt/nfs/share/datasets/scannet/scans/{scan_name}/{scan_name}.txt'
+                import os
+                if os.path.exists(meta_file):
+                    lines = open(meta_file).readlines()
+                    axis_align_matrix = None
+                    for line in lines:
+                        if 'axisAlignment' in line:
+                            axis_align_matrix = [float(x) for x in line.rstrip().strip('axisAlignment = ').split(' ')]
+                    axis_align_matrix = np.array(axis_align_matrix).reshape((4,4))
+                    pts = np.ones((locs_in.shape[0], 4))
+                    pts[:,0:3] = locs_in[:,0:3]
+                    locs_in = np.dot(pts, axis_align_matrix.transpose())[:, 0:3] # Nx4
+                else:
+                    print(scan_name)
+                    
+                sm_obj_pcd_p = f'/home/admin/Projects/EmbodiedScan/data/small_size_object/pcd/{scan_name}'
+                sm_pcs = []
+                sm_colors = []
+                if os.path.exists(sm_obj_pcd_p):
+                    for p in os.listdir(sm_obj_pcd_p):
+                        opcd = open3d.io.read_point_cloud(os.path.join(sm_obj_pcd_p, p))
+                        sm_pcs.extend(np.asarray(opcd.points).tolist())
+                        sm_colors.extend(np.asarray(opcd.colors).tolist())
+                    if len(sm_pcs) > 0:
+                        sm_pcs = np.array(sm_pcs)
+                        sm_colors = np.array(sm_colors)
+                        locs_in = np.concatenate([locs_in, sm_pcs], axis=0)
+                        feats_in = np.concatenate([feats_in, sm_colors], axis=0)
+                        labels_in = np.concatenate([labels_in, np.ones(sm_pcs.shape[0])*-100])
+                    
 
         # load 3D features
         if self.dataset_name == 'scannet_3d':
@@ -165,6 +199,11 @@ class FusedFeatureLoader(Point3DLoader):
             # get the corresponding features after voxelization
             feat_3d = feat_3d[indices]
         else:
+            
+            pad_num = len(locs) - len(mask_chunk)
+            if pad_num > 0:
+                mask_chunk = torch.cat((mask_chunk, torch.zeros(pad_num, dtype=torch.bool)))
+            
             locs, feats, labels, inds_reconstruct, vox_ind = self.voxelizer.voxelize(
                 locs[mask_chunk], feats_in[mask_chunk], labels_in[mask_chunk], return_ind=True)
             vox_ind = torch.from_numpy(vox_ind)

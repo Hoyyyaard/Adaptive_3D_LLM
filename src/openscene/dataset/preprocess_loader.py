@@ -6,6 +6,7 @@ from os.path import join
 import torch
 import numpy as np
 import SharedArray as SA
+import open3d
 
 from dataset.point_loader import Point3DLoader
 
@@ -68,6 +69,40 @@ class FusedFeatureLoader(Point3DLoader):
 
         index = index_long 
         locs_in, feats_in, labels_in = torch.load(self.data_paths[index])
+        
+        ## openscene 的坐标没有转换到scannet
+        scan_name = self.data_paths[index][:-15].split('/')[-1]
+        meta_file = f'/mnt/nfs/share/datasets/scannet/scans/{scan_name}/{scan_name}.txt'
+        import os
+        if os.path.exists(meta_file):
+            lines = open(meta_file).readlines()
+            axis_align_matrix = None
+            for line in lines:
+                if 'axisAlignment' in line:
+                    axis_align_matrix = [float(x) for x in line.rstrip().strip('axisAlignment = ').split(' ')]
+            axis_align_matrix = np.array(axis_align_matrix).reshape((4,4))
+            pts = np.ones((locs_in.shape[0], 4))
+            pts[:,0:3] = locs_in[:,0:3]
+            locs_in = np.dot(pts, axis_align_matrix.transpose())[:, 0:3] # Nx4
+        else:
+            print(scan_name)
+        
+        ## sm code
+        sm_obj_pcd_p = f'/home/admin/Projects/EmbodiedScan/data/small_size_object/pcd/{scan_name}'
+        sm_pcs = []
+        sm_colors = []
+        if os.path.exists(sm_obj_pcd_p):
+            for p in os.listdir(sm_obj_pcd_p):
+                opcd = open3d.io.read_point_cloud(os.path.join(sm_obj_pcd_p, p))
+                sm_pcs.extend(np.asarray(opcd.points).tolist())
+                sm_colors.extend(np.asarray(opcd.colors).tolist())
+            if len(sm_pcs) > 0:
+                sm_pcs = np.array(sm_pcs)
+                sm_colors = np.array(sm_colors)
+                locs_in = np.concatenate([locs_in, sm_pcs], axis=0)
+                feats_in = np.concatenate([feats_in, sm_colors], axis=0)
+                labels_in = np.concatenate([labels_in, np.ones(sm_pcs.shape[0])*-100])
+            
         labels_in[labels_in == -100] = 255
         labels_in = labels_in.astype(np.uint8)
         if np.isscalar(feats_in) and feats_in == 0:
@@ -101,14 +136,17 @@ class FusedFeatureLoader(Point3DLoader):
         if len(processed_data.keys())==2:
             flag_mask_merge = True
             feat_3d, mask_chunk = processed_data['feat'], processed_data['mask_full']
+            ## sm code
+            pad_num = locs_in.shape[0] - len(mask_chunk)
+            if pad_num > 0:
+                mask_chunk = np.concatenate((mask_chunk, np.zeros(pad_num, dtype=np.bool)))
             if isinstance(mask_chunk, np.ndarray): # if the mask itself is a numpy array
                 mask_chunk = torch.from_numpy(mask_chunk)
             mask = copy.deepcopy(mask_chunk)
-            if self.split != 'train': # val or test set
-                feat_3d_new = torch.zeros((locs_in.shape[0], feat_3d.shape[1]), dtype=feat_3d.dtype)
-                feat_3d_new[mask] = feat_3d
-                feat_3d = feat_3d_new
-                mask_chunk = torch.ones_like(mask_chunk) # every point needs to be evaluted
+            feat_3d_new = torch.zeros((locs_in.shape[0], feat_3d.shape[1]), dtype=feat_3d.dtype)
+            feat_3d_new[mask] = feat_3d
+            feat_3d = feat_3d_new
+            mask_chunk = torch.ones_like(mask_chunk) # every point needs to be evaluted
         elif len(processed_data.keys())>2: # legacy, for old processed features
             feat_3d, mask_visible, mask_chunk = processed_data['feat'], processed_data['mask'], processed_data['mask_full']
             mask = torch.zeros(feat_3d.shape[0], dtype=torch.bool)
@@ -119,55 +157,12 @@ class FusedFeatureLoader(Point3DLoader):
 
         locs = self.prevoxel_transforms(locs_in) if self.aug else locs_in
 
-        # calculate the corresponding point features after voxelization
-        if self.split == 'train' and flag_mask_merge:
-            locs, feats, labels, inds_reconstruct, vox_ind = self.voxelizer.voxelize(
-                locs_in, feats_in, labels_in, return_ind=True)
-            vox_ind = torch.from_numpy(vox_ind)
-            mask = mask_chunk[vox_ind] # voxelized visible mask for entire point cloud
-            mask_ind = mask_chunk.nonzero(as_tuple=False)[:, 0]
-            index1 = - torch.ones(mask_chunk.shape[0], dtype=int)
-            index1[mask_ind] = mask_ind
-
-            index1 = index1[vox_ind]
-            chunk_ind = index1[index1!=-1]
-
-            index2 = torch.zeros(mask_chunk.shape[0])
-            index2[mask_ind] = 1
-            index3 = torch.cumsum(index2, dim=0, dtype=int)
-            # get the indices of corresponding masked point features after voxelization
-            indices = index3[chunk_ind] - 1
-
-            # get the corresponding features after voxelization
-            feat_3d = feat_3d[indices]
-        elif self.split == 'train' and not flag_mask_merge: # legacy, for old processed features
-            feat_3d = feat_3d[mask] # get features for visible points
-            locs, feats, labels, inds_reconstruct, vox_ind = self.voxelizer.voxelize(
-                locs_in, feats_in, labels_in, return_ind=True)
-            mask_chunk[mask_chunk.clone()] = mask
-            vox_ind = torch.from_numpy(vox_ind)
-            mask = mask_chunk[vox_ind] # voxelized visible mask for entire point clouds
-            mask_ind = mask_chunk.nonzero(as_tuple=False)[:, 0]
-            index1 = - torch.ones(mask_chunk.shape[0], dtype=int)
-            index1[mask_ind] = mask_ind
-
-            index1 = index1[vox_ind]
-            chunk_ind = index1[index1!=-1]
-
-            index2 = torch.zeros(mask_chunk.shape[0])
-            index2[mask_ind] = 1
-            index3 = torch.cumsum(index2, dim=0, dtype=int)
-            # get the indices of corresponding masked point features after voxelization
-            indices = index3[chunk_ind] - 1
-
-            # get the corresponding features after voxelization
-            feat_3d = feat_3d[indices]
-        else:
-            locs, feats, labels, inds_reconstruct, vox_ind = self.voxelizer.voxelize(
-                locs[mask_chunk], feats_in[mask_chunk], labels_in[mask_chunk], return_ind=True)
-            vox_ind = torch.from_numpy(vox_ind)
-            feat_3d = feat_3d[vox_ind]
-            mask = mask[vox_ind]
+        
+        locs, feats, labels, inds_reconstruct, vox_ind = self.voxelizer.voxelize(
+            locs[mask_chunk], feats_in[mask_chunk], labels_in[mask_chunk], return_ind=True)
+        vox_ind = torch.from_numpy(vox_ind)
+        feat_3d = feat_3d[vox_ind]
+        mask = mask[vox_ind]
 
         if self.eval_all: # during evaluation, no voxelization for GT labels
             labels = labels_in

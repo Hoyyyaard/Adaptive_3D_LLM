@@ -135,7 +135,13 @@ def make_args_parser():
     parser.add_argument("--freeze_flex_llm", action='store_true')
     parser.add_argument("--load_pretrain_encoder", action='store_true')
     parser.add_argument("--gradient_checkpoint", action='store_true')
-    parser.add_argument("--num_flex_hidden_layers", required=True, type=int)
+    parser.add_argument("--num_finetune_hidden_layers", required=True, type=int)
+    ## only train the self attn layer
+    parser.add_argument("--only_finetune_self_attn", action='store_true')
+    ## train the self attn and flex attn layer
+    parser.add_argument("--finetune_flex_self_attn", action='store_true')
+    ## only train the flex attn layer
+    parser.add_argument("--only_finetune_flex_attn", action='store_true')
     
     args = parser.parse_args()
     args.use_height = not args.no_height
@@ -157,7 +163,10 @@ def make_args_parser():
     print(f'freeze_flex_llm: ', args.freeze_flex_llm)
     print(f'load_pretrain_encoder: ', args.load_pretrain_encoder)
     print(f'gradient_checkpoint: ', args.gradient_checkpoint)
-    print(f'num flex layers: ', args.num_flex_hidden_layers)
+    print(f'num finetune layers: ', args.num_finetune_hidden_layers)
+    print(f'only_finetune_self_attn: ', args.only_finetune_self_attn)
+    print(f'finetune_flex_self_attn: ', args.finetune_flex_self_attn)
+    print(f'only_finetune_flex_attn: ', args.only_finetune_flex_attn)
     
     return args
 
@@ -279,9 +288,10 @@ def main(local_rank, args):
 
         # try:
         checkpoint = torch.load(args.test_ckpt, map_location=torch.device("cpu"))
-        model.load_state_dict(checkpoint["model"], strict=False)
+        msg = model.load_state_dict(checkpoint["model"], strict=False)
         # except:
         #     print('test the model from scratch...')
+        print(msg)
         
         model_no_ddp = model.cuda()
         model = model.cuda(local_rank)
@@ -405,26 +415,35 @@ def finetune_flex_opt_main(local_rank, args):
     dataset_config, datasets, dataloaders = build_dataset(args)
     from src.modeling_opt_flex import FlexOPTForCausalLM, Shell_Model
     config = AutoConfig.from_pretrained('src/flex_opt_config.json')
-    config.num_flex_hidden_layers = args.num_flex_hidden_layers + 1
-    config.num_hidden_layers = 24 - args.num_flex_hidden_layers - 1
-    print("acc_num_flex_hidden_layers: ", config.num_flex_hidden_layers)
+    ## 这里代码有bug 由于代码上的bug 第一层的flex self attn相当于self attn
+    config.num_finetune_hidden_layers = args.num_finetune_hidden_layers + 1
+    config.num_hidden_layers = 24 - args.num_finetune_hidden_layers - 1
+    print("acc_num_flex_hidden_layers: ", config.num_finetune_hidden_layers)
     print("acc_num_hidden_layers: ", config.num_hidden_layers)
     if args.freeze_flex_llm:
-        config.num_hidden_layers = config.num_flex_hidden_layers + config.num_hidden_layers
-        config.num_flex_hidden_layers = 0
+        config.num_hidden_layers = config.num_finetune_hidden_layers + config.num_hidden_layers
+        config.num_finetune_hidden_layers = 0
         print('============================freeze llm====================================')
     model = Shell_Model(config=config)
+    
     if not args.freeze_flex_llm:
         ## 由于代码上的bug 第一层的flex self attn相当于self attn
         del model.model.model.decoder.flex_layers[0].self_attn.k_hr_proj
         del model.model.model.decoder.flex_layers[0].self_attn.v_hr_proj
+    
+    if args.only_finetune_self_attn:
+        ## 只训练self attn时候不需要flex attn的参数
+        for i in range(1, config.num_finetune_hidden_layers):
+            del model.model.model.decoder.flex_layers[i].self_attn.k_hr_proj
+            del model.model.model.decoder.flex_layers[i].self_attn.v_hr_proj
+    
     # testing phase
     if args.test_only:
 
         # try:
         checkpoint = torch.load(args.test_ckpt, map_location=torch.device("cpu"))
         if args.test_ckpt.split('/')[-1] == 'pytorch_model.bin':
-            replace_keys = [f'model.decoder.layers.{li+config.num_hidden_layers}' for li in range(config.num_flex_hidden_layers)]
+            replace_keys = [f'model.decoder.layers.{li+config.num_hidden_layers}' for li in range(config.num_finetune_hidden_layers)]
             flex_checkpoint = copy.deepcopy(checkpoint)
             for k,v in checkpoint.items():
                 find_key = None
@@ -487,7 +506,7 @@ def finetune_flex_opt_main(local_rank, args):
             checkpoint = torch.load(args.pretrained_weights, map_location="cpu")
             ## 记载官方模型时：使用原来的self attn的参数初始化flex attn的参数 这里需要改网络名字
             if args.pretrained_weights.split('/')[-1] == 'pytorch_model.bin':
-                replace_keys = [f'model.decoder.layers.{li+config.num_hidden_layers}' for li in range(config.num_flex_hidden_layers)]
+                replace_keys = [f'model.decoder.layers.{li+config.num_hidden_layers}' for li in range(config.num_finetune_hidden_layers)]
                 flex_checkpoint = copy.deepcopy(checkpoint)
                 for k,v in checkpoint.items():
                     find_key = None
@@ -502,7 +521,7 @@ def finetune_flex_opt_main(local_rank, args):
                 checkpoint = flex_checkpoint
             elif args.load_pretrain_encoder:
                 checkpoint = checkpoint['model']
-                replace_keys = [f'model.decoder.layers.{li+config.num_hidden_layers}' for li in range(config.num_flex_hidden_layers)]
+                replace_keys = [f'model.decoder.layers.{li+config.num_hidden_layers}' for li in range(config.num_finetune_hidden_layers)]
                 flex_checkpoint = copy.deepcopy(checkpoint)
                 for k,v in checkpoint.items():
                     find_key = None
@@ -534,20 +553,30 @@ def finetune_flex_opt_main(local_rank, args):
             param.requires_grad = True
         model_no_ddp.model.train()
         
-        ## Only train the linear layers
+        ## Only train the encoder : stage 1
         if args.freeze_flex_llm:
-            assert config.num_flex_hidden_layers == 0
+            assert config.num_finetune_hidden_layers == 0
             for name, param in model_no_ddp.model.named_parameters():
                 if name in checkpoint.keys():
                     param.requires_grad_(False)
-            
-            print("---------------------Trainable parameters when freeze llm: ----------------------")
-            for name, param in model_no_ddp.model.named_parameters():
-                if param.requires_grad:
-                    print(name)
         else:
-            model_no_ddp.model.scene_token_in_head.weight.requires_grad_(False)
-            print("---------------------freeze vision encoder----------------------")
+            if args.only_finetune_self_attn:
+                trainable_params = []
+                trainable_params.extend([f'model.decoder.flex_layers.{li}.self_attn.' for li in range(1,config.num_finetune_hidden_layers)])
+            elif args.only_finetune_flex_attn:
+                trainable_params = []
+                trainable_params.extend([f'model.decoder.flex_layers.{li}.self_attn.v_hr_proj.' for li in range(1,config.num_finetune_hidden_layers)])
+                trainable_params.extend([f'model.decoder.flex_layers.{li}.self_attn.k_hr_proj.' for li in range(1,config.num_finetune_hidden_layers)])
+            elif args.finetune_flex_self_attn:
+                trainable_params = []
+                trainable_params.extend([f'model.decoder.flex_layers.{li}.self_attn.' for li in range(1,config.num_finetune_hidden_layers)])
+                
+            for name, param in model_no_ddp.model.named_parameters():
+                for tp in trainable_params:
+                    if name.find(tp) != -1:
+                        param.requires_grad_(True)
+                        break
+                    param.requires_grad_(False)
         
         ## Only for test flex performance
         # for name, param in model_no_ddp.model.named_parameters():
@@ -572,7 +601,7 @@ def finetune_flex_opt_main(local_rank, args):
         if is_distributed():
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
             model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=[local_rank] , #find_unused_parameters=True
+                model, device_ids=[local_rank] , find_unused_parameters=True
             )
             
         if args.optimizer == 'AdamW':

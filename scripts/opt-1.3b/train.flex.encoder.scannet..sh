@@ -12,16 +12,15 @@ python main.py \
     --dataset unified_scanqa,unified_densecap_scanrefer,unified_densecap_nr3d,unified_3dllm_embodied_dialogue,unified_3dllm_embodied_planning,unified_3dllm_scene_description \
     --vocab ckpts/opt-model \
     --qformer_vocab bert-base-embedding \
-    --pretrained_weights ckpts/opt-1.3b/flex/encoder-openscene-maskformer-axis-align-w-sm-obj/checkpoint_40k.pth \
-    --checkpoint_dir ckpts/opt-1.3b/flex/model/encoder-openscene-maskformer-axis-align-w-sm-obj/4layer/finetune_flex_self_attn \
+    --pretrained_weights ckpts/opt-model/pytorch_model.bin \
+    --checkpoint_dir ckpts/opt-1.3b/flex/encoder-openscene-maskformer-axis-align-w-sm-obj\
     --max_epoch 8 \
     --dataset_num_workers 4 \
     --finetune_flex_opt \
     --dist_url tcp://localhost:12445 \
     --save_every 2000 \
-    --batchsize_per_gpu 2 --ngpus 6 --base_lr 1e-5 --final_lr 1e-6 \
+    --batchsize_per_gpu 3 --ngpus 8 --base_lr 1e-5 --final_lr 1e-6 \
     --cache_dir results/debug \
-    --finetune_flex_self_attn \
-    --load_pretrain_encoder \
-    --num_finetune_hidden_layers 4 \
+    --freeze_flex_llm \
+    --num_finetune_hidden_layers 0 \
     # --gradient_checkpoint \

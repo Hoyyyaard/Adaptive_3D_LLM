@@ -228,13 +228,13 @@
             "python": "/home/admin/micromamba/envs/ll3da/bin/python",
             "args": [
                 "--config","config/scannet/ours_openseg_pretrained.yaml",
-                "feature_type", "ensemble",
+                "feature_type", "distill",
                 "save_folder", "results",
                 
             ],
             "env": {
                 "PYTHONPATH":".",
-                "CUDA_VISIBLE_DEVICES":"0",
+                "CUDA_VISIBLE_DEVICES":"1",
                 "DISPLAY":"localhost:10.0"
             }
         },
@@ -294,17 +294,18 @@
                 "--dataset", "unified_scanqa",
                 "--dist_url", "tcp://localhost:12345",
                 "--batchsize_per_gpu", "1",
-                "--ngpus", "3",
+                "--ngpus", "1",
                 "--cache_dir", "results/debug",
                 "--finetune_flex_opt",
-                "--pretrained_weights","ckpts/opt-model/pytorch_model.bin",
+                "--pretrained_weights","ckpts/opt-1.3b/flex/encoder-openscene-maskformer-axis-align-w-sm-obj/checkpoint_36k.pth",
                 "--load_pretrain_encoder",
                 "--base_lr" , "1",
                 "--final_lr" , "1",
                 // "--gradient_checkpoint",
                 "--warm_lr_epochs","0",
-                "--num_flex_hidden_layers","0",
-                "--freeze_flex_llm"
+                "--num_finetune_hidden_layers","2",
+                "--only_finetune_self_attn"
+
             ],
             "env": {
                 "PYTHONWARNINGS":"ignore:semaphore_tracker:UserWarning",
@@ -366,6 +367,44 @@
                 "--checkpoint_dir", "results",
                 "--test_ckpt", "ckpts/opt-1.3b/flex/encoder-openscene-maskformer1/checkpoint_6k.pth",
                 "--dataset", "unified_scanqa",
+                "--vocab", "facebook/opt-1.3b",
+                "--qformer_vocab", "bert-base-embedding",
+                "--dist_url", "tcp://localhost:12345",
+                "--batchsize_per_gpu", "1",
+                "--ngpus", "1",
+                "--use_beam_search",
+                "--test_only",
+                "--log_dir", "results/scanqa",
+                "--cache_dir","results/debug",
+                "--finetune_flex_opt",
+                "--load_pretrain_encoder",
+
+            ],
+            "env": {
+                "PYTHONWARNINGS":"ignore:semaphore_tracker:UserWarning",
+                "CUDA_VISIBLE_DEVICES":"0",
+                "MKL_NUM_THREADS":"1",
+                "NUMEXPR_NUM_THREADS":"1",
+                "OMP_NUM_THREADS":"1",
+                "DISPLAY":"localhost:10.0"
+            }
+        },
+        {
+            "name": "eval small object qa",
+            "type": "python",
+            "request": "launch",
+            "program": "main.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "python": "/home/admin/micromamba/envs/ll3da/bin/python",
+            "args": [
+                "--use_color",
+                "--use_normal",
+                "--detector", "detector_Vote2Cap_DETR",
+                "--captioner", "ll3da",
+                "--checkpoint_dir", "results",
+                "--test_ckpt", "ckpts/opt-1.3b/flex/encoder-openscene-maskformer1/checkpoint_6k.pth",
+                "--dataset", "unified_small_object_scanqa",
                 "--vocab", "facebook/opt-1.3b",
                 "--qformer_vocab", "bert-base-embedding",
                 "--dist_url", "tcp://localhost:12345",

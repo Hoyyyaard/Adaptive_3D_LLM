@@ -204,7 +204,7 @@ def main_worker(gpu, ngpus_per_node, argss):
     val_data = FusedFeatureLoader(datapath_prefix=args.data_root,
                                 datapath_prefix_feat=args.data_root_2d_fused_feature,
                                 voxel_size=args.voxel_size, 
-                                split='val', aug=False,
+                                split='train', aug=False,
                                 memcache_init=args.use_shm, eval_all=True, identifier=6797,
                                 input_color=args.input_color)
     val_sampler = None
@@ -289,9 +289,10 @@ def evaluate(model, val_data_loader, labelset_name='scannet_3d'):
                     predictions = model(sinput)
                     predictions = predictions[inds_reverse, :]
                     
-                    op_dir = f'/mnt/nfs/share/Adaptive/openscene_dense_fts_distill'
-                    torch.save(predictions, f'{op_dir}/{scan_name[0]}_dense_fts.pt')
+                    op_dir = f'/mnt/nfs/share/Adaptive/openscene_dense_fts_distill_axis_align_w_sm_obj'
+                    np.save(f'{op_dir}/{scan_name[0]}_dense_fts.npy', predictions.cpu().numpy())
                     torch.save(locs_in, f'{op_dir}/{scan_name[0]}_xyz.pt')
+                    torch.save(inds_reverse, f'{op_dir}/{scan_name[0]}_inds_reverse.pt')
                     torch.save(feat, f'{op_dir}/{scan_name[0]}_color.pt')
                     
                     continue

@@ -224,7 +224,7 @@ def evaluate(
         match_box_ious = match_box_ious.cpu().tolist()
         
         ## USer
-        viusualization_preict_bbox(batch_data_label['point_clouds'][0], outputs["box_corners"][0][good_bbox_masks], batch_data_label['gt_box_corners'][0])
+        # viusualization_preict_bbox(batch_data_label['point_clouds'][0], outputs["box_corners"][0][good_bbox_masks], batch_data_label['gt_box_corners'][0])
             
         ### calculate measurable indicators on captions
         for idx, scene_id in enumerate(batch_data_label["scan_idx"].cpu().tolist()):

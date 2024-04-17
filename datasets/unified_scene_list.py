@@ -66,7 +66,7 @@ class Dataset(ScanNetBaseDataset):
         
         
         self.annotations = os.listdir('/mnt/nfs/share/datasets/scannet/scans')
-        print(self.annotations)
+        # print(self.annotations)
         
         # self._tag_dataset(self.annotations, 'qa')
         

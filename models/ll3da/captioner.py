@@ -189,11 +189,10 @@ class captioner(nn.Module):
         
         ## caption generation cores
         # from src.modeling_opt_flex import FlexOPTForCausalLM
-        # self.transformer = FlexOPTForCausalLM.from_pretrained('ckpts/opt-model')
+        # self.transformer = AutoModelForCausalLM.from_pretrained('ckpts/opt-model')
         self.transformer = AutoModelForCausalLM.from_pretrained(
             args.vocab,
             torch_dtype=self.dtype,
-            trust_remote_code = True
         )
         self.n_embd = self.transformer.config.hidden_size
         
@@ -277,28 +276,28 @@ class captioner(nn.Module):
             attention_mask=query_attention_mask,
             query_embeds=query_tokens,
             encoder_hidden_states=self.encoder_to_qformer_projection(encoder_hidden_states),
-            output_attentions=True
+            # output_attentions=True
         )
         
         query_outputs_latent = query_outputs[0][:, : self.nlatent_query, :]
         prefix_feature = self.qformer_to_language_projection(query_outputs_latent)
         
         ## save x-attn here
-        import os
-        assert detector_output['enc_xyz'].shape[0] == 1
-        task_name = inputs['task_name']
-        x_attn_weight = torch.stack(query_outputs['cross_attentions'], dim=0)
-        attn_dict = {
-            'x_attn_weight' : x_attn_weight,
-            'xyz' : detector_output['enc_xyz'],
-            'scan_idx' : inputs['scan_idx'],
-            'scan_name': inputs['scan_name']
-        }
-        op_path = f'results/attn_vis/{task_name}'
-        if not os.path.exists(op_path):
-            os.makedirs(op_path)
-        scan_idx = inputs['scan_idx']
-        torch.save(attn_dict, f'{op_path}/{scan_idx.item()}.pt')
+        # import os
+        # assert detector_output['enc_xyz'].shape[0] == 1
+        # task_name = inputs['task_name']
+        # x_attn_weight = torch.stack(query_outputs['cross_attentions'], dim=0)
+        # attn_dict = {
+        #     'x_attn_weight' : x_attn_weight,
+        #     'xyz' : detector_output['enc_xyz'],
+        #     'scan_idx' : inputs['scan_idx'],
+        #     'scan_name': inputs['scan_name']
+        # }
+        # op_path = f'results/attn_vis/{task_name}'
+        # if not os.path.exists(op_path):
+        #     os.makedirs(op_path)
+        # scan_idx = inputs['scan_idx']
+        # torch.save(attn_dict, f'{op_path}/{scan_idx.item()}.pt')
         
         return prefix_feature
         

@@ -29,18 +29,18 @@
   "word_embed_proj_dim": 2048,
 
   "num_hidden_layers": 15,
-  "num_flex_hidden_layers": 9,
+  "num_finetune_hidden_layers": 9,
   "attn_softmax_scale": 100,
 
   "scene_token_num": 512,
-  "scene_token_sample_radius": 0.4,
+  "scene_token_sample_radius": 0.2,
   "scene_token_sample_num_per_ball": 128,
 
   "region_radius": 0.25,
   "region_sample_num": 5000,
   "region_token_sample_num": 10,
-  "region_token_sample_radius": 0.02,
-  "region_token_sample_num_per_ball": 128,
+  "region_token_sample_radius": 0.05,
+  "region_token_sample_num_per_ball": 5000,
 
   "use_flex_layer": true
 
