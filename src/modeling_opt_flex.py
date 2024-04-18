@@ -1275,6 +1275,7 @@ class FlexAttention(nn.Module):
         layer_head_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
         hr_key_value_states: Optional[torch.Tensor] = None,
+        top_indices: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
         
@@ -1327,7 +1328,16 @@ class FlexAttention(nn.Module):
                         end_index = (j+1) * dense_token_num
                         hr_attention_mask[bs, j, start_index:end_index] = 0.
                 ## 最后为scene token加上attn mask，即每个scene token都可以于dense region token交互
-                scene_token_attention_mask = torch.zeros((bsz, self.config.scene_token_num, hr_key_value_states.shape[1]*hr_key_value_states.shape[2]), device=hr_key_value_states.device)
+                # scene_token_attention_mask = torch.zeros((bsz, self.config.scene_token_num, hr_key_value_states.shape[1]*hr_key_value_states.shape[2]), device=hr_key_value_states.device)
+                        
+                ## 每个scene token只能和自己选出来的dense token交互
+                scene_token_attention_mask = torch.ones((bsz, self.config.scene_token_num, hr_key_value_states.shape[1]*hr_key_value_states.shape[2]), device=hr_key_value_states.device)*torch.finfo(hr_key_value_states.dtype).min
+                for bs in range(bsz):
+                    top_indices_bs = top_indices[bs].view(-1)
+                    for dj in range(len(top_indices_bs)):
+                        id = top_indices_bs[dj]
+                        scene_token_attention_mask[bs, id, dj*10:(dj+1)*10] = 0.
+                
                 hr_attention_mask = torch.cat([scene_token_attention_mask, hr_attention_mask], dim=1)
                 ## concat 到原来的attention mask上
                 attention_mask = torch.cat([attention_mask, hr_attention_mask.unsqueeze(1)], dim=-1)
@@ -1374,6 +1384,7 @@ class FlexAttention(nn.Module):
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
 
         attn_weights_bf_sm = torch.clone(attn_weights)
+        attn_weights_bf_sm = attn_weights_bf_sm[:, :, :tgt_len]
         # upcast to fp32 if the weights are in fp16. Please see https://github.com/huggingface/transformers/pull/17437
         if attn_weights.dtype == torch.float16:
             attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(torch.float16)
@@ -1392,6 +1403,11 @@ class FlexAttention(nn.Module):
         attn_probs = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
 
         attn_output = torch.bmm(attn_probs, value_states)
+        
+        ## drop hr token here
+        ## attn_weights [32, tgt_len, src_len]
+        attn_weights = attn_weights[:, :, :tgt_len]
+        src_len = tgt_len
         
         # ## TODO：check inference
         # if hr_key_value_states is not None:        ## [bs, text_seq_len, 4*32, 2048]
@@ -1485,7 +1501,6 @@ class FlexAttention(nn.Module):
 
         attn_output = self.out_proj(attn_output)
         
-        src_len = key_states.size(1)
         multi_head_attn_weights = attn_weights_bf_sm.view(bsz, self.num_heads, tgt_len, src_len).contiguous()
         global_attention_map = torch.sum(multi_head_attn_weights, dim=1)
         scene_token_hidden_state = global_attention_map[:, self.config.scene_token_num:, :][:, :, :self.config.scene_token_num].contiguous() #* self.config.attn_softmax_scale
@@ -1532,7 +1547,7 @@ class Dense_Region_Selector(nn.Module):
             batch_select_dense_region_tokens.append(select_dense_region_tokens)
         batch_select_dense_region_tokens = torch.stack(batch_select_dense_region_tokens, dim=0)
         # batch_select_dense_region_tokens = self.scene_token_head(batch_select_dense_region_tokens)
-        return batch_select_dense_region_tokens
+        return batch_select_dense_region_tokens, top_indices ## [bs, text_token_num, 4]
 
         ## argmax版本 
         # max_indices = torch.argmax(last_sparse_scene_token_hidden_state, dim=-1)
@@ -1585,6 +1600,7 @@ class FlexOPTDecoderLayer(OPTDecoderLayer):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         hr_key_value_states: Optional[torch.Tensor] = None,
+        top_indices: Optional[torch.Tensor] = None,
         dense_pcd_info = None,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
@@ -1619,6 +1635,7 @@ class FlexOPTDecoderLayer(OPTDecoderLayer):
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
             hr_key_value_states=hr_key_value_states,
+            top_indices=top_indices
         )
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
@@ -1656,9 +1673,11 @@ class FlexOPTDecoderLayer(OPTDecoderLayer):
         if use_cache:
             outputs += (present_key_value,)
             
-        hr_key_value_states = self.dense_region_selector(scene_token_hidden_state, dense_pcd_info['dense_region_tokens'])
+        hr_key_value_states, top_indices = self.dense_region_selector(scene_token_hidden_state, dense_pcd_info['dense_region_tokens'])
 
         outputs += (hr_key_value_states,)
+        outputs += (top_indices,)
+        
         
         return outputs
     
@@ -1829,6 +1848,9 @@ class FlexOPTDecoder(OPTDecoder):
             causal_attention_mask = _prepare_4d_causal_attention_mask(
                 attention_mask, input_shape, inputs_embeds, past_key_values_length
             )
+        
+        ## scene token 不应该是causal的
+        causal_attention_mask[:,:,:512,:512] = 0.
 
         pos_embeds = self.embed_positions(attention_mask, past_key_values_length)
 
@@ -1927,6 +1949,7 @@ class FlexOPTDecoder(OPTDecoder):
                     output_attentions,
                     use_cache,
                     None if idx == 0 else hr_key_value_states,
+                    None if idx == 0 else top_indices,
                     dense_pcd_info,
                 )
             else:
@@ -1938,11 +1961,13 @@ class FlexOPTDecoder(OPTDecoder):
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                     hr_key_value_states=None if idx == 0 else hr_key_value_states,
+                    top_indices=None if idx == 0 else top_indices,
                     dense_pcd_info=dense_pcd_info,
                 )
 
             
-            hr_key_value_states = layer_outputs[-1]
+            hr_key_value_states = layer_outputs[-2]
+            top_indices = layer_outputs[-1]
             hidden_states = layer_outputs[0]
 
             if use_cache:
@@ -2169,8 +2194,9 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         if batch_data_label is None:
             batch_data_label = copy.deepcopy(self.batch_data_label)
         pre_enc_features = self._run_mask_tranformer_encoder(batch_data_label['scene_tokens'], batch_data_label['scene_xyz'])
-        batch_data_label['dense_region_tokens'] = self._run_mask_tranformer_encoder(batch_data_label['dense_region_tokens'].view(-1, 10, 771), batch_data_label['dense_region_xyz'].view(-1, 10, 3))
-        batch_data_label['dense_region_tokens'] = batch_data_label['dense_region_tokens'].view(-1, 512, 10 ,2048)
+        # batch_data_label['dense_region_tokens'] = self.scene_token_in_head(batch_data_label['dense_region_tokens'])
+        # batch_data_label['dense_region_tokens'] = self._run_mask_tranformer_encoder(batch_data_label['dense_region_tokens'].view(-1, 10, 771), batch_data_label['dense_region_xyz'].view(-1, 10, 3))
+        # batch_data_label['dense_region_tokens'] = batch_data_label['dense_region_tokens'].view(-1, 512, 10 ,2048)
         
         # features = batch_data_label['openscene_sparse_fts']
         # features = features.transpose(1, 2).contiguous()
@@ -2212,19 +2238,16 @@ class FlexOPTForCausalLM(OPTForCausalLM):
             dense_pcd_info={
                 'dense_region_tokens':batch_data_label['dense_region_tokens'],
             }
-            # dense_pcd_info={
-            #     'sparse_scene_xyz':pre_enc_xyz,
-            #     'dense_scene_fts':batch_data_label['openscene_dense_fts'],
-            #     'pre_enc_inds':pre_enc_inds,
-            #     'dense_scene_xyz':batch_data_label['openscene_dense_pcd'],
-            #     'valid_pcd_len': batch_data_label['valid_pcd_len']
-            # }
         )
 
         ## save attn results
         ## [layer_num(24), num_head(32), seq_len(512+n), seq_len(512+n)]
+        # if self.new_episode:
+        #     self.new_episode = False
+        #     self.new_token_idx = 0
         # assert outputs['attentions'][0].shape[0] == 1
         # attn = torch.cat(outputs['attentions'], dim=0)
+        # attn = attn[:, :, -1, :]
         # task_name = batch_data_label['task_name']
         # attn_dict = {
         #     'attn_weight' : attn,
@@ -2232,11 +2255,13 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         #     'scan_idx' : batch_data_label['scan_idx'],
         #     'scan_name': batch_data_label['scan_name']
         # }
-        # op_path = f'results/attn_vis/{task_name}'
+        # scan_idx = batch_data_label['scan_idx'].item()
+        # op_path = f'results/attn_vis_flex/{task_name}/{scan_idx}'
         # if not os.path.exists(op_path):
         #     os.makedirs(op_path)
         # scan_idx = batch_data_label['scan_idx']
-        # torch.save(attn_dict, f'{op_path}/{scan_idx.item()}.pt')
+        # torch.save(attn_dict, f'{op_path}/{self.new_token_idx}.pt')
+        # self.new_token_idx += 1
         
         logits = self.lm_head(outputs[0])
         # labels = batch_data_label['input_ids']
@@ -2598,8 +2623,9 @@ class Shell_Model(nn.Module):
                 'qa': 64,
                 'chat': 512,
             }
-            ## TODO:处理 batch
-            output_ids_list = []
+            max_length = 64
+            output_ids_list = torch.ones(input_ids.shape[0], max_length).long().to(input_ids.device)
+            output_ids_list = output_ids_list * caption_config['eos_token_id']
             for batch_id in range(input_ids.shape[0]):
                 data_label = {
                     'dense_region_tokens': batch_data_label['dense_region_tokens'][batch_id].unsqueeze(0),
@@ -2611,18 +2637,17 @@ class Shell_Model(nn.Module):
                     'dense_region_xyz': batch_data_label['dense_region_xyz'][batch_id].unsqueeze(0),
                     'point_cloud_dims_min': batch_data_label['point_cloud_dims_min'][batch_id].unsqueeze(0),
                     'point_cloud_dims_max': batch_data_label['point_cloud_dims_max'][batch_id].unsqueeze(0),
+                    'task_name': 'qa',
+                    'scan_idx': batch_data_label['scan_idx'],
+                    'scan_name': batch_data_label['scan_name']
                     }
                 self.model.set_batch_data_label_cache(data_label)
+                self.model.new_episode = True
                 output_ids = self.model.generate(input_ids = (input_ids[batch_id].unsqueeze(0)[attention_mask[batch_id].unsqueeze(0)==1].unsqueeze(0)), max_length=128)    
-                output_ids_list.append(output_ids[:, len(input_ids[batch_id].unsqueeze(0)[attention_mask[batch_id].unsqueeze(0)==1]):])
-            output_ids_list = torch.cat(output_ids_list, dim=0)
-            #     caption_config['max_length'] = response_config[task_name]
-            #     caption_config['batch_data_label'] = data_label
-            #     caption_config['inputs_embeds'] = self.model.model.decoder.embed_tokens(input_ids[batch_id].unsqueeze(0)[attention_mask[batch_id].unsqueeze(0)==1].unsqueeze(0))
-            #     output_ids = greedy_decode(self.model, **caption_config)['output_ids']
-            #     output_ids_list.append(output_ids)
-            # output_ids_list = torch.cat(output_ids_list, dim=0)
+                output_ids = output_ids[:, len(input_ids[batch_id].unsqueeze(0)[attention_mask[batch_id].unsqueeze(0)==1]):][0] 
+                output_ids_list[batch_id][:len(output_ids)] = output_ids   
             return {'output_ids':  output_ids_list}
+            
         else:
             input_ids = batch_data_label['input_ids']
             attention_mask = batch_data_label['attention_mask']

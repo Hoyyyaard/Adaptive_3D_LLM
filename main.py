@@ -439,7 +439,7 @@ def finetune_flex_opt_main(local_rank, args):
     
     # testing phase
     if args.test_only:
-
+        print(args.test_ckpt)
         # try:
         checkpoint = torch.load(args.test_ckpt, map_location=torch.device("cpu"))
         if args.test_ckpt.split('/')[-1] == 'pytorch_model.bin':
@@ -532,6 +532,11 @@ def finetune_flex_opt_main(local_rank, args):
                     if not find_key is None:
                         layer_idx = int(find_key.split('.')[-1])-config.num_hidden_layers
                         flex_checkpoint[k.replace(find_key, f'model.decoder.flex_layers.{layer_idx}')] = v
+                        ## 使用原本的k，v proj初始化k，v hr proj
+                        if find_key.find('v_proj') != -1 :
+                            flex_checkpoint[k.replace(find_key, f'model.decoder.flex_layers.{layer_idx}.self_attn.v_hr_proj')] = v
+                        elif find_key.find('k_proj') != -1:
+                            flex_checkpoint[k.replace(find_key, f'model.decoder.flex_layers.{layer_idx}.self_attn.k_hr_proj')] = v
                         flex_checkpoint.pop(k)
                 checkpoint = flex_checkpoint
             else:

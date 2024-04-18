@@ -13,12 +13,12 @@ python main.py \
     --vocab ckpts/opt-model \
     --qformer_vocab bert-base-embedding \
     --pretrained_weights ckpts/opt-model/pytorch_model.bin \
-    --checkpoint_dir ckpts/opt-1.3b/flex/encoder-openscene-maskformer-axis-align-w-sm-obj\
+    --checkpoint_dir ckpts/opt-1.3b/nipus_exp/encoder-openscene-maskformer-axis-align-w-sm-obj-wocausal\
     --max_epoch 8 \
     --dataset_num_workers 4 \
     --finetune_flex_opt \
     --dist_url tcp://localhost:12445 \
-    --save_every 2000 \
+    --save_every 4000 \
     --batchsize_per_gpu 3 --ngpus 8 --base_lr 1e-5 --final_lr 1e-6 \
     --cache_dir results/debug \
     --freeze_flex_llm \
