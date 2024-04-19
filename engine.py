@@ -455,8 +455,8 @@ def do_flex_opt_finetune(
             for key in batch_data_label:
                 if not isinstance(batch_data_label[key], list):
                     batch_data_label[key] = batch_data_label[key].to(net_device)
-                    # if batch_data_label[key].dtype == torch.float32:
-                    #     batch_data_label[key].requires_grad_(True)
+                    if batch_data_label[key].dtype == torch.float32:
+                        batch_data_label[key] = batch_data_label[key].to(net_dtype)
                 else:
                     batch_data_label[key] = batch_data_label[key]
             
@@ -480,10 +480,18 @@ def do_flex_opt_finetune(
                     exit(-1)
             curr_nan_times = 0
             
+            # torch.autograd.set_detect_anomaly(True)
             loss.backward()
             if args.clip_gradient > 0:
                 torch.nn.utils.clip_grad_norm_(model_no_ddp.model.parameters(), args.clip_gradient)
+            
+            # for n, p in model_no_ddp.model.named_parameters():
+            #     assert not torch.isnan(p).any()
+                
             optimizer.step()
+            
+            # for p in model_no_ddp.model.parameters():
+            #     assert not torch.isnan(p).any()
     
             time_delta.update(time.time() - curr_time)
             loss_avg.update(loss.item())

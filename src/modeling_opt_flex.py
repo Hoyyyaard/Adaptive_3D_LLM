@@ -1319,7 +1319,7 @@ class FlexAttention(nn.Module):
                 value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
                 dense_token_num = hr_key_value_states.shape[2]
                 
-                hr_attention_mask = torch.ones((bsz, hr_key_value_states.shape[1], hr_key_value_states.shape[1]*hr_key_value_states.shape[2]), device=hr_key_value_states.device)*torch.finfo(hr_key_value_states.dtype).min
+                hr_attention_mask = torch.ones((bsz, hr_key_value_states.shape[1], hr_key_value_states.shape[1]*hr_key_value_states.shape[2]), device=hr_key_value_states.device, dtype=hr_key_value_states.dtype)*torch.finfo(hr_key_value_states.dtype).min
                 ## 每个text token只能跟自己选出来的dense scene token进行交互
                 ## pad的text token也需要mask
                 batch_valid_len_w_eos = (attention_mask.squeeze(1)[:, -1, :] == 0).sum(dim=1) - self.config.scene_token_num
@@ -1333,7 +1333,7 @@ class FlexAttention(nn.Module):
                 # scene_token_attention_mask = torch.zeros((bsz, self.config.scene_token_num, hr_key_value_states.shape[1]*hr_key_value_states.shape[2]), device=hr_key_value_states.device)
                         
                 ## 每个scene token只能和自己选出来的dense token交互
-                scene_token_attention_mask = torch.ones((bsz, self.config.scene_token_num, hr_key_value_states.shape[1]*hr_key_value_states.shape[2]), device=hr_key_value_states.device)*torch.finfo(hr_key_value_states.dtype).min
+                scene_token_attention_mask = torch.ones((bsz, self.config.scene_token_num, hr_key_value_states.shape[1]*hr_key_value_states.shape[2]), device=hr_key_value_states.device, dtype=hr_key_value_states.dtype)*torch.finfo(hr_key_value_states.dtype).min
                 for bs in range(bsz):
                     top_indices_bs = top_indices[bs].view(-1)
                     for dj in range(len(top_indices_bs)):
@@ -1896,25 +1896,25 @@ class FlexOPTDecoder(OPTDecoder):
 
             past_key_value = past_key_values[idx] if past_key_values is not None else None
 
-            # if self.gradient_checkpointing and self.training:
-            #     layer_outputs = self._gradient_checkpointing_func(
-            #         decoder_layer.__call__,
-            #         hidden_states,
-            #         causal_attention_mask,
-            #         head_mask[idx] if head_mask is not None else None,
-            #         None,
-            #         output_attentions,
-            #         use_cache,
-            #     )
-            # else:
-            layer_outputs = decoder_layer(
-                hidden_states,
-                attention_mask=causal_attention_mask,
-                layer_head_mask=(head_mask[idx] if head_mask is not None else None),
-                past_key_value=past_key_value,
-                output_attentions=output_attentions,
-                use_cache=use_cache,
-            )
+            if self.gradient_checkpointing and self.training:
+                layer_outputs = self._gradient_checkpointing_func(
+                    decoder_layer.__call__,
+                    hidden_states,
+                    causal_attention_mask,
+                    head_mask[idx] if head_mask is not None else None,
+                    None,
+                    output_attentions,
+                    use_cache,
+                )
+            else:
+                layer_outputs = decoder_layer(
+                    hidden_states,
+                    attention_mask=causal_attention_mask,
+                    layer_head_mask=(head_mask[idx] if head_mask is not None else None),
+                    past_key_value=past_key_value,
+                    output_attentions=output_attentions,
+                    use_cache=use_cache,
+                )
 
             hidden_states = layer_outputs[0]
 
@@ -2043,7 +2043,7 @@ class FlexOPTForCausalLM(OPTForCausalLM):
     def __init__(self, config):
         super().__init__(config)
         self.model = FlexOPTModel(config)
-        self.prompt_encoder = PromptEncoder()
+        # self.prompt_encoder = PromptEncoder()
         self.tokenizer = AutoTokenizer.from_pretrained('ckpts/opt-model')
 
         # the lm_head weight is automatically tied to the embed tokens weight
@@ -2197,8 +2197,9 @@ class FlexOPTForCausalLM(OPTForCausalLM):
             batch_data_label = copy.deepcopy(self.batch_data_label)
         pre_enc_features = self._run_mask_tranformer_encoder(batch_data_label['scene_tokens'], batch_data_label['scene_xyz'])
         # batch_data_label['dense_region_tokens'] = self.scene_token_in_head(batch_data_label['dense_region_tokens'])
-        batch_data_label['dense_region_tokens'] = self._run_mask_tranformer_encoder(batch_data_label['dense_region_tokens'].view(-1, 10, 771), batch_data_label['dense_region_xyz'].view(-1, 10, 3))
-        batch_data_label['dense_region_tokens'] = batch_data_label['dense_region_tokens'].view(-1, 512, 10 ,2048)
+        
+        # batch_data_label['dense_region_tokens'] = self._run_mask_tranformer_encoder(batch_data_label['dense_region_tokens'].view(-1, 10, 771), batch_data_label['dense_region_xyz'].view(-1, 10, 3))
+        # batch_data_label['dense_region_tokens'] = batch_data_label['dense_region_tokens'].view(-1, 512, 10 ,2048)
         
         # features = batch_data_label['openscene_sparse_fts']
         # features = features.transpose(1, 2).contiguous()
@@ -2208,23 +2209,23 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         pre_enc_features_mask = torch.ones_like(pre_enc_features[..., 0])
         
         if past_key_values is None :
-            if batch_data_label['click_mask'][0, 0].item() == 1:
-                click_query = batch_data_label['click_query'][:, 0, :]
-                click_query = click_query.unsqueeze(1)
-                point_cloud_dims = [
-                    batch_data_label["point_cloud_dims_min"],
-                    batch_data_label["point_cloud_dims_max"],
-                ]
-                prompt_embeds = self.prompt_encoder(point_cloud_dims, click_query)
-                prompt_mask = torch.ones_like(prompt_embeds[..., 0])
+            # if batch_data_label['click_mask'][0, 0].item() == 1:
+            #     click_query = batch_data_label['click_query'][:, 0, :]
+            #     click_query = click_query.unsqueeze(1)
+            #     point_cloud_dims = [
+            #         batch_data_label["point_cloud_dims_min"],
+            #         batch_data_label["point_cloud_dims_max"],
+            #     ]
+            #     prompt_embeds = self.prompt_encoder(point_cloud_dims, click_query)
+            #     prompt_mask = torch.ones_like(prompt_embeds[..., 0])
                 
-                inputs_embeds = torch.cat([pre_enc_features, prompt_embeds, inputs_embeds], dim=1)
-                attention_mask = torch.cat([pre_enc_features_mask, prompt_mask, attention_mask], dim=1)
-                self.prefix_len = pre_enc_features.shape[1] + prompt_embeds.shape[1]
-            else:
-                inputs_embeds = torch.cat([pre_enc_features, inputs_embeds], dim=1)
-                attention_mask = torch.cat([pre_enc_features_mask, attention_mask], dim=1)
-                self.prefix_len = pre_enc_features.shape[1]
+            #     inputs_embeds = torch.cat([pre_enc_features, prompt_embeds, inputs_embeds], dim=1)
+            #     attention_mask = torch.cat([pre_enc_features_mask, prompt_mask, attention_mask], dim=1)
+            #     self.prefix_len = pre_enc_features.shape[1] + prompt_embeds.shape[1]
+            # else:
+            inputs_embeds = torch.cat([pre_enc_features, inputs_embeds], dim=1)
+            attention_mask = torch.cat([pre_enc_features_mask, attention_mask], dim=1)
+            self.prefix_len = pre_enc_features.shape[1]
         
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model.decoder(
@@ -2606,7 +2607,7 @@ def beam_search_decode(transformer: Callable, **kwargs) -> Tensor:
 class Shell_Model(nn.Module):
     def __init__(self, config) -> None:
         super(Shell_Model, self).__init__()
-        self.model = FlexOPTForCausalLM.from_pretrained('ckpts/opt-model', config=config)
+        self.model = FlexOPTForCausalLM.from_pretrained('ckpts/opt-model', config=config, torch_dtype=torch.float16)
         
     def forward(self, batch_data_label, is_eval, task_name=None):
         if is_eval:

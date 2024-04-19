@@ -1,6 +1,7 @@
 import os, argparse, importlib
 import numpy as np
 import torch
+import torch.distributed as dist
 
 from collections import OrderedDict
 import copy
@@ -142,6 +143,9 @@ def make_args_parser():
     parser.add_argument("--finetune_flex_self_attn", action='store_true')
     ## only train the flex attn layer
     parser.add_argument("--only_finetune_flex_attn", action='store_true')
+    ## fully finetune opt1.3b in stage 1
+    parser.add_argument("--finetune_opt1_3b", action='store_true')
+    
     
     args = parser.parse_args()
     args.use_height = not args.no_height
@@ -167,6 +171,7 @@ def make_args_parser():
     print(f'only_finetune_self_attn: ', args.only_finetune_self_attn)
     print(f'finetune_flex_self_attn: ', args.finetune_flex_self_attn)
     print(f'only_finetune_flex_attn: ', args.only_finetune_flex_attn)
+    print(f'finetune_opt1_3b: ', args.finetune_opt1_3b)
     
     return args
 
@@ -420,13 +425,13 @@ def finetune_flex_opt_main(local_rank, args):
     config.num_hidden_layers = 24 - args.num_finetune_hidden_layers - 1
     print("acc_num_flex_hidden_layers: ", config.num_finetune_hidden_layers)
     print("acc_num_hidden_layers: ", config.num_hidden_layers)
-    if args.freeze_flex_llm:
+    if args.freeze_flex_llm or args.finetune_opt1_3b:
         config.num_hidden_layers = config.num_finetune_hidden_layers + config.num_hidden_layers
         config.num_finetune_hidden_layers = 0
         print('============================freeze llm====================================')
     model = Shell_Model(config=config)
     
-    if not args.freeze_flex_llm:
+    if not args.freeze_flex_llm and not args.finetune_opt1_3b:
         ## 由于代码上的bug 第一层的flex self attn相当于self attn
         del model.model.model.decoder.flex_layers[0].self_attn.k_hr_proj
         del model.model.model.decoder.flex_layers[0].self_attn.v_hr_proj
@@ -568,6 +573,10 @@ def finetune_flex_opt_main(local_rank, args):
             for name, param in model_no_ddp.model.named_parameters():
                 if name in checkpoint.keys():
                     param.requires_grad_(False)
+        elif args.finetune_opt1_3b:
+            assert config.num_finetune_hidden_layers == 0
+            for name, param in model_no_ddp.model.named_parameters():
+                param.requires_grad_(True)
         else:
             if args.only_finetune_self_attn:
                 trainable_params = ['encoder.layer', 'encoder.norm', 'scene_token_in_head']
@@ -602,20 +611,22 @@ def finetune_flex_opt_main(local_rank, args):
         if is_distributed():
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
             model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=[local_rank] , find_unused_parameters=True
+                model, device_ids=[local_rank] , #find_unused_parameters=True
             )
             
         if args.optimizer == 'AdamW':
             optimizer = torch.optim.AdamW(
                 optimizer_param, 
                 lr=args.base_lr, 
-                weight_decay=args.weight_decay
+                weight_decay=args.weight_decay,
+                eps=1e-4 if model_no_ddp.model.dtype == torch.float16 else 1e-8
             )
         elif args.optimizer == 'SGD':
             optimizer = torch.optim.SGD(
                 optimizer_param,
                 lr=args.base_lr, 
-                weight_decay=args.weight_decay
+                weight_decay=args.weight_decay,
+                eps=1e-4 if model_no_ddp.model.dtype == torch.float16 else 1e-8
             )
         else:
             raise NotImplementedError

@@ -152,12 +152,13 @@ class MaskedTransformerEncoder(TransformerEncoder):
 
     def compute_mask(self, xyz, radius, dist=None):
         with torch.no_grad():
+            xyz = xyz.to(torch.float32)
             if dist is None or dist.shape[1] != xyz.shape[1]:
                 dist = torch.cdist(xyz, xyz, p=2)
             # entries that are True in the mask do not contribute to self-attention
             # so points outside the radius are not considered
             mask = dist >= radius
-        return mask, dist
+        return mask.to(torch.float16), dist.to(torch.float16)
 
     def forward(self, src,
                 mask: Optional[Tensor] = None,
