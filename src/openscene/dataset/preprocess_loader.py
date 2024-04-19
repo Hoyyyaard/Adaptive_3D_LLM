@@ -71,7 +71,11 @@ class FusedFeatureLoader(Point3DLoader):
         locs_in, feats_in, labels_in = torch.load(self.data_paths[index])
         
         ## openscene 的坐标没有转换到scannet
-        scan_name = self.data_paths[index][:-15].split('/')[-1]
+        # scan_name = self.data_paths[index][:-15].split('/')[-1]
+        # import os
+        # opcd = np.load(os.path.join('/home/admin/Projects/LL3DA/data/scannet/scannet_data_w_sm_obj_dense', scan_name + '_ins_label.npy'))
+        # assert opcd.shape[0] == locs_in.shape[0]
+        
         meta_file = f'/mnt/nfs/share/datasets/scannet/scans/{scan_name}/{scan_name}.txt'
         import os
         if os.path.exists(meta_file):
@@ -88,20 +92,20 @@ class FusedFeatureLoader(Point3DLoader):
             print(scan_name)
         
         ## sm code
-        sm_obj_pcd_p = f'/home/admin/Projects/EmbodiedScan/data/small_size_object/pcd/{scan_name}'
-        sm_pcs = []
-        sm_colors = []
-        if os.path.exists(sm_obj_pcd_p):
-            for p in os.listdir(sm_obj_pcd_p):
-                opcd = open3d.io.read_point_cloud(os.path.join(sm_obj_pcd_p, p))
-                sm_pcs.extend(np.asarray(opcd.points).tolist())
-                sm_colors.extend(np.asarray(opcd.colors).tolist())
-            if len(sm_pcs) > 0:
-                sm_pcs = np.array(sm_pcs)
-                sm_colors = np.array(sm_colors)
-                locs_in = np.concatenate([locs_in, sm_pcs], axis=0)
-                feats_in = np.concatenate([feats_in, sm_colors], axis=0)
-                labels_in = np.concatenate([labels_in, np.ones(sm_pcs.shape[0])*-100])
+        # sm_obj_pcd_p = f'/home/admin/Projects/EmbodiedScan/data/small_size_object/pcd/{scan_name}'
+        # sm_pcs = []
+        # sm_colors = []
+        # if os.path.exists(sm_obj_pcd_p):
+        #     for p in os.listdir(sm_obj_pcd_p):
+        #         opcd = open3d.io.read_point_cloud(os.path.join(sm_obj_pcd_p, p))
+        #         sm_pcs.extend(np.asarray(opcd.points).tolist())
+        #         sm_colors.extend(np.asarray(opcd.colors).tolist())
+        #     if len(sm_pcs) > 0:
+        #         sm_pcs = np.array(sm_pcs)
+        #         sm_colors = np.array(sm_colors)
+        #         locs_in = np.concatenate([locs_in, sm_pcs], axis=0)
+        #         feats_in = np.concatenate([feats_in, sm_colors], axis=0)
+        #         labels_in = np.concatenate([labels_in, np.ones(sm_pcs.shape[0])*-100])
             
         labels_in[labels_in == -100] = 255
         labels_in = labels_in.astype(np.uint8)

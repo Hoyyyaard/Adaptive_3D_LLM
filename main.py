@@ -441,30 +441,33 @@ def finetune_flex_opt_main(local_rank, args):
     if args.test_only:
         print(args.test_ckpt)
         # try:
-        checkpoint = torch.load(args.test_ckpt, map_location=torch.device("cpu"))
-        if args.test_ckpt.split('/')[-1] == 'pytorch_model.bin':
-            replace_keys = [f'model.decoder.layers.{li+config.num_hidden_layers}' for li in range(config.num_finetune_hidden_layers)]
-            flex_checkpoint = copy.deepcopy(checkpoint)
-            for k,v in checkpoint.items():
-                find_key = None
-                for rk in replace_keys:
-                    if k.find(rk) != -1:
-                        find_key = rk
-                        break
-                if not find_key is None:
-                    layer_idx = int(find_key.split('.')[-1])-config.num_hidden_layers
-                    flex_checkpoint[k.replace(find_key, f'model.decoder.flex_layers.{layer_idx}')] = v
-                    flex_checkpoint.pop(k)
-            checkpoint = flex_checkpoint
-        if args.test_ckpt == 'ckpts/opt-model/pytorch_model.bin':
-            msg = model.model.load_state_dict(checkpoint, strict=False)
-        elif args.load_pretrain_encoder:
-            msg = model.model.load_state_dict(checkpoint['model'], strict=False)
+        if not args.test_ckpt == '':
+            checkpoint = torch.load(args.test_ckpt, map_location=torch.device("cpu"))
+            if args.test_ckpt.split('/')[-1] == 'pytorch_model.bin':
+                replace_keys = [f'model.decoder.layers.{li+config.num_hidden_layers}' for li in range(config.num_finetune_hidden_layers)]
+                flex_checkpoint = copy.deepcopy(checkpoint)
+                for k,v in checkpoint.items():
+                    find_key = None
+                    for rk in replace_keys:
+                        if k.find(rk) != -1:
+                            find_key = rk
+                            break
+                    if not find_key is None:
+                        layer_idx = int(find_key.split('.')[-1])-config.num_hidden_layers
+                        flex_checkpoint[k.replace(find_key, f'model.decoder.flex_layers.{layer_idx}')] = v
+                        flex_checkpoint.pop(k)
+                checkpoint = flex_checkpoint
+            if args.test_ckpt == 'ckpts/opt-model/pytorch_model.bin':
+                msg = model.model.load_state_dict(checkpoint, strict=False)
+            elif args.load_pretrain_encoder:
+                msg = model.model.load_state_dict(checkpoint['model'], strict=False)
+            else:
+                msg = model.model.load_state_dict(checkpoint['model'], strict=True)
+            # except:
+            #     print('test the model from scratch...')
+            print(msg)
         else:
-            msg = model.model.load_state_dict(checkpoint['model'], strict=True)
-        # except:
-        #     print('test the model from scratch...')
-        print(msg)
+            print("!!!!!!!YOU DONOT LOAD TRAINING WEIGHT!!!!!!")
     
         
         # model_no_ddp = model.cuda()
@@ -533,10 +536,11 @@ def finetune_flex_opt_main(local_rank, args):
                         layer_idx = int(find_key.split('.')[-1])-config.num_hidden_layers
                         flex_checkpoint[k.replace(find_key, f'model.decoder.flex_layers.{layer_idx}')] = v
                         ## 使用原本的k，v proj初始化k，v hr proj
-                        if find_key.find('v_proj') != -1 :
-                            flex_checkpoint[k.replace(find_key, f'model.decoder.flex_layers.{layer_idx}.self_attn.v_hr_proj')] = v
-                        elif find_key.find('k_proj') != -1:
-                            flex_checkpoint[k.replace(find_key, f'model.decoder.flex_layers.{layer_idx}.self_attn.k_hr_proj')] = v
+                        if layer_idx > 0:
+                            if k.find('v_proj') != -1 :
+                                flex_checkpoint[k.replace(f'{find_key}.self_attn.v_proj', f'model.decoder.flex_layers.{layer_idx}.self_attn.v_hr_proj')] = v
+                            elif k.find('k_proj') != -1:
+                                flex_checkpoint[k.replace(f'{find_key}.self_attn.k_proj', f'model.decoder.flex_layers.{layer_idx}.self_attn.k_hr_proj')] = v
                         flex_checkpoint.pop(k)
                 checkpoint = flex_checkpoint
             else:
@@ -566,14 +570,14 @@ def finetune_flex_opt_main(local_rank, args):
                     param.requires_grad_(False)
         else:
             if args.only_finetune_self_attn:
-                trainable_params = []
+                trainable_params = ['encoder.layer', 'encoder.norm', 'scene_token_in_head']
                 trainable_params.extend([f'model.decoder.flex_layers.{li}.self_attn.' for li in range(1,config.num_finetune_hidden_layers)])
             elif args.only_finetune_flex_attn:
-                trainable_params = []
+                trainable_params = ['encoder.layer', 'encoder.norm', 'scene_token_in_head']
                 trainable_params.extend([f'model.decoder.flex_layers.{li}.self_attn.v_hr_proj.' for li in range(1,config.num_finetune_hidden_layers)])
                 trainable_params.extend([f'model.decoder.flex_layers.{li}.self_attn.k_hr_proj.' for li in range(1,config.num_finetune_hidden_layers)])
             elif args.finetune_flex_self_attn:
-                trainable_params = []
+                trainable_params = ['encoder.layer', 'encoder.norm', 'scene_token_in_head']
                 trainable_params.extend([f'model.decoder.flex_layers.{li}.self_attn.' for li in range(1,config.num_finetune_hidden_layers)])
                 
             for name, param in model_no_ddp.model.named_parameters():
@@ -582,14 +586,6 @@ def finetune_flex_opt_main(local_rank, args):
                         param.requires_grad_(True)
                         break
                     param.requires_grad_(False)
-        
-        ## Only for test flex performance
-        # for name, param in model_no_ddp.model.named_parameters():
-        #      if name.find('hr_proj') != -1:
-        #         param.requires_grad_(True)
-        #      else:
-        #         param.requires_grad_(False)
-        
         
         if is_primary():
             print('====                                          ====')

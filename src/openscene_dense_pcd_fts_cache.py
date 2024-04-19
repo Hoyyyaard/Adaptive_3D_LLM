@@ -19,14 +19,24 @@ class OpenScene_Fts_Cache():
     def _get_dense_pcd(self, scan_name):
         return torch.load(os.path.join(self.cache_dir, scan_name + '_xyz.pt'), map_location='cpu').numpy()
     
+    def _get_reverse_inds(self, scan_name):
+        return torch.load(os.path.join(self.cache_dir, scan_name + '_inds_reverse.pt'), map_location='cpu').numpy()
+    
+    def _get_gt_dense_instance_labels(self, scan_name):
+        return np.load(os.path.join('data/scannet/scannet_data_w_sm_obj_dense', scan_name + '_ins_label.npy'))
+    
     def get_openscene_scan_datas(self, scan_name, preprocess):
         if preprocess:
             dense_pcd = self._get_dense_pcd(scan_name)
             dense_fts = self._get_dense_fts(scan_name)
+            reverse_inds = self._get_reverse_inds(scan_name)
+            instance_labels = self._get_gt_dense_instance_labels(scan_name)
+            
             inds = np.random.choice(len(dense_fts), self.npoint, replace=True)
             
             openscene_sparse_fts = dense_fts[inds, :]
             openscene_sparse_pcd = dense_pcd[inds, :]
+            instance_labels = instance_labels[inds]
             
             valid_pcd_len = 0
             # if len(dense_pcd) <= self.pad_npoint:
@@ -48,7 +58,8 @@ class OpenScene_Fts_Cache():
                 'openscene_sample_inds': inds,
                 'openscene_sparse_fts': openscene_sparse_fts.astype(np.float32),
                 'openscene_sparse_pcd': openscene_sparse_pcd.astype(np.float32),
-                'valid_pcd_len' : valid_pcd_len
+                'valid_pcd_len' : valid_pcd_len ,
+                'instance_labels': instance_labels.astype(np.int64),
             }
             
             return output_dict

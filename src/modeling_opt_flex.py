@@ -2,6 +2,8 @@ from typing import List, Optional, Tuple, Union
 import copy
 import os
 import torch
+import sys
+sys.path.append('/home/admin/Projects/LL3DA/')
 import heapq, time
 from torch import Tensor
 from typing import Callable
@@ -2195,8 +2197,8 @@ class FlexOPTForCausalLM(OPTForCausalLM):
             batch_data_label = copy.deepcopy(self.batch_data_label)
         pre_enc_features = self._run_mask_tranformer_encoder(batch_data_label['scene_tokens'], batch_data_label['scene_xyz'])
         # batch_data_label['dense_region_tokens'] = self.scene_token_in_head(batch_data_label['dense_region_tokens'])
-        # batch_data_label['dense_region_tokens'] = self._run_mask_tranformer_encoder(batch_data_label['dense_region_tokens'].view(-1, 10, 771), batch_data_label['dense_region_xyz'].view(-1, 10, 3))
-        # batch_data_label['dense_region_tokens'] = batch_data_label['dense_region_tokens'].view(-1, 512, 10 ,2048)
+        batch_data_label['dense_region_tokens'] = self._run_mask_tranformer_encoder(batch_data_label['dense_region_tokens'].view(-1, 10, 771), batch_data_label['dense_region_xyz'].view(-1, 10, 3))
+        batch_data_label['dense_region_tokens'] = batch_data_label['dense_region_tokens'].view(-1, 512, 10 ,2048)
         
         # features = batch_data_label['openscene_sparse_fts']
         # features = features.transpose(1, 2).contiguous()
@@ -2240,8 +2242,8 @@ class FlexOPTForCausalLM(OPTForCausalLM):
             }
         )
 
-        ## save attn results
-        ## [layer_num(24), num_head(32), seq_len(512+n), seq_len(512+n)]
+        # save attn results
+        # [layer_num(24), num_head(32), seq_len(512+n), seq_len(512+n)]
         # if self.new_episode:
         #     self.new_episode = False
         #     self.new_token_idx = 0
@@ -2256,7 +2258,7 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         #     'scan_name': batch_data_label['scan_name']
         # }
         # scan_idx = batch_data_label['scan_idx'].item()
-        # op_path = f'results/attn_vis_flex/{task_name}/{scan_idx}'
+        # op_path = f'results/attn_vis_flex/encoder-openscene-maskformer-axis-align-w-sm-obj-wocausal/32k/{task_name}/{scan_idx}'
         # if not os.path.exists(op_path):
         #     os.makedirs(op_path)
         # scan_idx = batch_data_label['scan_idx']

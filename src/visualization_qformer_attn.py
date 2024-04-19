@@ -7,7 +7,6 @@ import random
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-
 attn_dir = 'results/attn_vis/qa'
 exp_dir = 'results/toy_exp/scanqa/official/qa_pred_gt_val.json'
 

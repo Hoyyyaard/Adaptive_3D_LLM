@@ -8,16 +8,16 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 
-attn_dir = 'results/attn_vis_flex/qa'
-exp_dir = 'results/toy_exp/scanqa/official/qa_pred_gt_val.json'
+attn_dir = 'results/attn_vis_flex/test/'
+# exp_dir = 'results/toy_exp/nipus_exp/unified_scanqa/finetune_model/encoder-openscene-maskformer-axis-align-w-sm-obj-wocausal/4layer/finetune_flex_self_attn/1epoch/qa_corpus_val.json'
 
 ## FIXME
-new_qa_pred_gt = {}
-with open(exp_dir, 'r') as f:
-    qa_pred_gt = json.load(f)
-for k,v in qa_pred_gt.items():
-    question_id = k.split('-')[0] + '-' + k.split('-')[1] + '-' + k.split('-')[2]
-    new_qa_pred_gt[question_id] = v
+# new_qa_pred_gt = {}
+# with open(exp_dir, 'r') as f:
+#     qa_pred_gt = json.load(f)
+# for k,v in qa_pred_gt.items():
+#     question_id = k.split('-')[0] + '-' + k.split('-')[1] + '-' + k.split('-')[2]
+#     new_qa_pred_gt[question_id] = v
 
 
 def _get_scan_data(scan_name,):
@@ -75,6 +75,15 @@ for episode in tqdm(attn_p_list):
     object_names = anno_info["object_names"]
     print(anno_info['question'])
     print(anno_info['answers'])
+    
+    # pred_info = new_qa_pred_gt[anno_info['question_id']]
+    # print("Pred: ", pred_info['pred'])
+    # pred_seq = pred_info['pred'][0].split(' ')
+    
+    # score = pred_info['score']
+    # if not score['CiDEr'] > 0.7:
+    #     continue
+    
     ## get scene pcd
     scene_pcd_info = _get_scan_data(anno_info['scene_id'])
     point_clouds = scene_pcd_info["point_clouds"][:, :3]  
@@ -86,15 +95,12 @@ for episode in tqdm(attn_p_list):
         object_points = point_clouds[oid]    # npt x 3
         tmp_pcd.points = o3d.utility.Vector3dVector(object_points)
         aabb = tmp_pcd.get_axis_aligned_bounding_box()
-        # cube = o3d.geometry.TriangleMesh.create_box(width=aabb.get_extent()[0],
-        #                                     height=aabb.get_extent()[1],
-        #                                     depth=aabb.get_extent()[2])
-        # cube.translate(aabb.get_min_bound())  # 将立方体移动到边界盒的最小边界位置
-        # cube.paint_uniform_color([0, 1, 0])  
         axis_aligned_bounding_box_list.append(aabb)
     
     instrest_sphere_list = []
-    for token_idx, last_token_attn_p in enumerate(os.listdir(epi_p:=os.path.join(attn_dir, episode))):
+    new_tokens = os.listdir(epi_p:=os.path.join(attn_dir, episode))[:-1]
+    for token_idx, last_token_attn_p in enumerate(new_tokens):
+        # print(pred_seq[token_idx])
         attn_infos = torch.load(os.path.join(epi_p, last_token_attn_p), map_location='cpu')
         
         scan_name = attn_infos['scan_name'][0]
@@ -102,8 +108,8 @@ for episode in tqdm(attn_p_list):
         
         ## [layers(24), nhead(32), scen_token(512)+text_token(?)]
         attn_weight = attn_infos['attn_weight']
-        ## only perserve last 4 layers
-        attn_weight = attn_weight[-4:, ...]
+        ## only perserve last k layers
+        attn_weight = attn_weight[-8:, ...]
         ## only perserve scene token
         attn_weight = attn_weight[..., :512]
         
@@ -133,45 +139,3 @@ for episode in tqdm(attn_p_list):
     o3d.visualization.draw_geometries([vis_pcd, *axis_aligned_bounding_box_list, *instrest_sphere_list])
        
     
-    
-    # # question_answer = anno_info['question'].replace(' ', '_') + '-' + anno_info['answers'][0].replace(' ', '_')
-    # object_ids = anno_info['object_ids']
-    # object_names = anno_info["object_names"]
-    
-    # ## get current qa score from exp dir
-    # pred_info = new_qa_pred_gt[anno_info['question_id']]
-    # uid = anno_info['question_id'] + '-' + anno_info['question'].replace(' ', '_') + '-' + anno_info['answers'][0].replace(' ', '_')
-    # score = pred_info['score']
-    # if not score['CiDEr'] < 0.1:
-    #     continue
-    
-
-            
-        
-
-        # img_width, img_height = (1920, 1080)
-
-        # mat = o3d.visualization.rendering.MaterialRecord()
-        # mat.shader = 'defaultUnlit'
-
-        # renderer_pc = o3d.visualization.rendering.OffscreenRenderer(img_width, img_height)
-        # renderer_pc.scene.set_background(np.array([0, 0, 0, 0]))
-        # renderer_pc.scene.add_geometry("pcd", vis_pcd, mat)
-
-        # # # Optionally set the camera field of view (to zoom in a bit)
-        # vertical_field_of_view = 90  # between 5 and 90 degrees
-        # aspect_ratio = img_width / img_height  # azimuth over elevation
-        # near_plane = 0.1
-        # far_plane = 50.0
-        # fov_type = o3d.visualization.rendering.Camera.FovType.Vertical
-        # renderer_pc.scene.camera.set_projection(vertical_field_of_view, aspect_ratio, near_plane, far_plane, fov_type)
-
-        # # Look at the origin from the front (along the -Z direction, into the screen), with Y as Up.
-        # center = [0, 0, 0]  # look_at target
-        # eye = [0, 0, 2]  # camera position
-        # up = [0, 1, 0]  # camera orientation
-        # renderer_pc.scene.camera.look_at(center, eye, up)
-
-        # # 捕获图像
-        # image = renderer_pc.render_to_image()
-        # o3d.io.write_image('rgb.png', image)

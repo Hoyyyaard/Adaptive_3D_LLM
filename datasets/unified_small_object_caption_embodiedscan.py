@@ -196,7 +196,7 @@ class Dataset(ScanNetBaseDataset):
                 point_cloud = np.concatenate([point_cloud, np.expand_dims(height, 1)], 1)
                 
                 
-                from src.utils import dense_pointclouds_from_bbox
+                from utils_adaptive import dense_pointclouds_from_bbox
                 # if uni_key in exist_npy:
                 #     ret_dict['point_clouds'], ret_dict['sample_prob'] = np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['point_clouds'], np.load(f'{cache_path}.npy',allow_pickle=True).tolist()['sample_prob']
                 # else:

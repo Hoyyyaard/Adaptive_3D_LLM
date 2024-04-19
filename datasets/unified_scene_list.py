@@ -93,7 +93,7 @@ class Dataset(ScanNetBaseDataset):
     def __getitem__(self, idx):
         
         scan_name = self.annotations[idx]
-        ret_dict = {}
+        ret_dict = self._get_scan_data_adaptive(scan_name)
         if self.args.finetune_flex_opt:
             ret_dict.update(self.openscene_fts_cache.get_openscene_scan_datas(scan_name, preprocess=self.args.token_preprocess))
             ret_dict['scan_name'] = scan_name

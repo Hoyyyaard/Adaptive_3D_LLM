@@ -1,5 +1,4 @@
 import sys
-sys.path.append('/home/admin/Projects/LL3DA/')
 import numpy as np
 from tqdm import tqdm
 import utils.pc_util as pc_util

@@ -181,7 +181,7 @@ class Dataset(ScanNetBaseDataset):
             bbox_size = [bbox.max_bound[i] - bbox.min_bound[i] for i in range(len(bbox.max_bound))]
             object_size = bbox_size[0] * bbox_size[1] * bbox_size[2]
             
-            from src.utils import dense_pointclouds
+            from utils_adaptive import dense_pointclouds
             if uni_key in exist_npy:
                 try:
                     ret_dict = np.load(f'{cache_path}.npy',allow_pickle=True).tolist()
