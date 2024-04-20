@@ -23,7 +23,7 @@ class LL3DA_Fts_Cache():
         
 
 class OpenScene_Fts_Cache():
-    def __init__(self, cache_dir='/mnt/nfs/share/Adaptive/openscene_dense_fts_distill_axis_align_w_sm_obj'):
+    def __init__(self, cache_dir):
         self.cache_dir = cache_dir
         self.dense_fts_cache = {}
         self.npoint = 40000
@@ -49,8 +49,8 @@ class OpenScene_Fts_Cache():
             instance_labels = self._get_gt_dense_instance_labels(scan_name)
             
             ## 由于本来的点云concat了小物体但是 instance label是没有的
-            if len(dense_pcd) - len(instance_labels) > 0:
-                instance_labels = np.concatenate([instance_labels, np.zeros(len(dense_pcd) - len(instance_labels), dtype=instance_labels.dtype)])
+            # if len(dense_pcd) - len(instance_labels) > 0:
+            #     instance_labels = np.concatenate([instance_labels, np.zeros(len(dense_pcd) - len(instance_labels), dtype=instance_labels.dtype)])
             
             inds = np.random.choice(len(dense_fts), self.npoint, replace=True)
             
@@ -58,7 +58,6 @@ class OpenScene_Fts_Cache():
             openscene_sparse_pcd = dense_pcd[inds, :]
             instance_labels = instance_labels[inds]
             
-            valid_pcd_len = 0
             # if len(dense_pcd) <= self.pad_npoint:
             #     pad_pcd_array = np.ones((self.pad_npoint - len(dense_pcd), dense_pcd.shape[1]), dtype=dense_fts.dtype)*(1e3)
             #     pad_fts_array = np.zeros((self.pad_npoint - len(dense_fts), dense_fts.shape[1]), dtype=dense_fts.dtype)
@@ -78,7 +77,6 @@ class OpenScene_Fts_Cache():
                 'openscene_sample_inds': inds,
                 'openscene_sparse_fts': openscene_sparse_fts.astype(np.float32),
                 'openscene_sparse_pcd': openscene_sparse_pcd.astype(np.float32),
-                'valid_pcd_len' : valid_pcd_len ,
                 'instance_labels': instance_labels.astype(np.int64),
             }
             
@@ -89,14 +87,21 @@ class OpenScene_Fts_Cache():
             scene_tokens = scene_tokens[0][0]
             scene_xyz = torch.load(f'{cache_dir}/enc_xyz.pt', map_location='cpu').numpy().astype(np.float32)
             scene_xyz = scene_xyz[0]
-            dense_region_tokens = [torch.load(f'{cache_dir}/region_features_{i}.pt', map_location='cpu') for i in range(scene_tokens.shape[0])]
-            dense_region_tokens = torch.cat(dense_region_tokens, dim=0).numpy().astype(np.float32)
-            dense_region_xyz = [torch.load(f'{cache_dir}/region_xyz_{i}.pt', map_location='cpu') for i in range(scene_tokens.shape[0])]
-            dense_region_xyz = torch.cat(dense_region_xyz, dim=0).numpy().astype(np.float32)
+            
+            other_pcd_info = torch.load(f'{cache_dir}/other_pcd_info.pt', map_location='cpu')
+            instance_labels = other_pcd_info['instance_labels'].numpy().astype(np.int64)
+            point_clouds = other_pcd_info['point_clouds'].numpy().astype(np.float32) 
+            
+            # dense_region_tokens = [torch.load(f'{cache_dir}/region_features_{i}.pt', map_location='cpu') for i in range(scene_tokens.shape[0])]
+            # dense_region_tokens = torch.cat(dense_region_tokens, dim=0).numpy().astype(np.float32)
+            # dense_region_xyz = [torch.load(f'{cache_dir}/region_xyz_{i}.pt', map_location='cpu') for i in range(scene_tokens.shape[0])]
+            # dense_region_xyz = torch.cat(dense_region_xyz, dim=0).numpy().astype(np.float32)
             return {
                 'scene_tokens': scene_tokens,
                 'scene_xyz': scene_xyz,
-                'dense_region_tokens': dense_region_tokens,
-                'dense_region_xyz': dense_region_xyz
+                'openscene_instance_labels' : instance_labels[0],
+                'openscene_point_clouds': point_clouds[0],
+                # 'dense_region_tokens': dense_region_tokens,
+                # 'dense_region_xyz': dense_region_xyz
             }
     

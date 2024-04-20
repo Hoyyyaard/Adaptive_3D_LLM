@@ -603,14 +603,14 @@ def finetune_flex_opt_main(local_rank, args):
                 param.requires_grad_(True)
         else:
             if args.only_finetune_self_attn:
-                trainable_params = ['encoder.layer', 'encoder.norm', 'scene_token_in_head']
+                trainable_params = ['prompt_encoder', 'encoder.layer', 'encoder.norm', 'scene_token_in_head']
                 trainable_params.extend([f'model.decoder.flex_layers.{li}.self_attn.' for li in range(1,config.num_finetune_hidden_layers)])
             elif args.only_finetune_flex_attn:
-                trainable_params = ['encoder.layer', 'encoder.norm', 'scene_token_in_head']
+                trainable_params = ['prompt_encoder', 'encoder.layer', 'encoder.norm', 'scene_token_in_head']
                 trainable_params.extend([f'model.decoder.flex_layers.{li}.self_attn.v_hr_proj.' for li in range(1,config.num_finetune_hidden_layers)])
                 trainable_params.extend([f'model.decoder.flex_layers.{li}.self_attn.k_hr_proj.' for li in range(1,config.num_finetune_hidden_layers)])
             elif args.finetune_flex_self_attn:
-                trainable_params = ['encoder.layer', 'encoder.norm', 'scene_token_in_head']
+                trainable_params = ['prompt_encoder', 'encoder.layer', 'encoder.norm', 'scene_token_in_head']
                 trainable_params.extend([f'model.decoder.flex_layers.{li}.self_attn.' for li in range(1,config.num_finetune_hidden_layers)])
                 
             for name, param in model_no_ddp.model.named_parameters():

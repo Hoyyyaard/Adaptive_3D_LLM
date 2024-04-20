@@ -144,7 +144,27 @@ class Dataset(ScanNetBaseDataset):
             if self.args.use_ll3da_scene_token:
                 ret_dict.update(self.ll3da_fts_cache.get_ll3da_scan_datas(scan_name))
             else:
-                ret_dict.update(self.openscene_fts_cache.get_openscene_scan_datas(scan_name, preprocess=self.args.token_preprocess))
+                openscene_ret_dict = (self.openscene_fts_cache.get_openscene_scan_datas(scan_name, preprocess=self.args.token_preprocess))
+                pcd = openscene_ret_dict['openscene_point_clouds']
+                instance_labels = openscene_ret_dict['openscene_instance_labels']
+                
+                openscene_ret_dict['point_cloud_dims_min'] = pcd[..., :3].min(axis=0)
+                openscene_ret_dict['point_cloud_dims_max'] = pcd[..., :3].max(axis=0)
+                
+                click_query = np.zeros((1, 3))
+                click_mask = np.zeros((1,))
+                openscene_ret_dict['click_query'] = click_query.astype(np.float32)
+                openscene_ret_dict['click_mask'] = click_mask.astype(np.float32)
+                
+                openscene_ret_dict['input_ids'] = ret_dict['input_ids']
+                openscene_ret_dict['attention_mask'] = ret_dict['attention_mask']
+                openscene_ret_dict['gradient_mask'] = ret_dict['gradient_mask']
+                
+                ## below are used for both training and evaluation
+                openscene_ret_dict['scan_idx'] = np.array(idx).astype(np.int64)
+                openscene_ret_dict['instruction'] = ret_dict['instruction']
+                openscene_ret_dict['instruction_mask'] = ret_dict['instruction_mask']
+                ret_dict = openscene_ret_dict
             ret_dict['scan_name'] = scan_name
         
         if self.args.abl_ll3da_w_openscene_token:

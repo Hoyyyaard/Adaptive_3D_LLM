@@ -1852,7 +1852,7 @@ class FlexOPTDecoder(OPTDecoder):
             )
         
         ## scene token 不应该是causal的
-        causal_attention_mask[:,:,:512,:512] = 0.
+        causal_attention_mask[:,:,:520,:520] = 0.
 
         pos_embeds = self.embed_positions(attention_mask, past_key_values_length)
 
@@ -2011,11 +2011,12 @@ from models.ll3da.position_embedding import PositionEmbeddingCoordsSine
 class PromptEncoder(nn.Module):
     def __init__(self):
         super(PromptEncoder, self).__init__()
-        
+        self.visual_nquery = 8
+        self.hidden_size = 2048
         self.click_prompt_projector = nn.Sequential(
-            nn.Linear(256, 1024),
+            nn.Linear(256, self.hidden_size),
             nn.ReLU(),
-            nn.Linear(1024, 2048),
+            nn.Linear(self.hidden_size, self.visual_nquery*self.hidden_size),
         )
         self.pos_emb3d = PositionEmbeddingCoordsSine(
             d_pos=256, 
@@ -2023,19 +2024,34 @@ class PromptEncoder(nn.Module):
             normalize=True
         )
         
-        
+    def expand_prompt_representation(self, prompt_feature: Tensor, prompt_mask: Tensor=None):
+        # input:
+        #   prompt_feature: batch x nprompt x (ntkn x channel)
+        #   prompt_mask: batch x nprompt
+        # output:
+        #   prompt_feature: batch x (nprompt x ntkn) x channel
+        #   prompt_mask: batch x (nprompt x ntkn)
+        batch_size, nprompt = prompt_feature.shape[:2]
+        if prompt_mask is None:
+            prompt_mask = torch.ones_like(prompt_feature[..., 0])
+        prompt_mask = prompt_mask.unsqueeze(-1).repeat(1, 1, self.visual_nquery)
+        prompt_mask = prompt_mask.reshape(batch_size, nprompt * self.visual_nquery)
+        prompt_feature = prompt_feature.reshape(batch_size, nprompt, self.visual_nquery, self.hidden_size)
+        prompt_feature = prompt_feature.reshape(batch_size, nprompt * self.visual_nquery, self.hidden_size)
+        return prompt_feature, prompt_mask
+    
     def forward(self, 
         point_cloud_dims,
         click_query=None,
+        click_qmask=None
     ):
         
-        # click prompt encoding: batch x nquery x nproposal
         click_xyz = click_query     # batch x nquery x 3
-        ## TODO: check point_cloud_dims
         click_prompt = self.pos_emb3d(click_xyz, input_range=point_cloud_dims)
         click_prompt = self.click_prompt_projector(click_prompt.permute(0, 2, 1))
+        click_prompt, click_qmask = self.expand_prompt_representation(click_prompt, click_qmask)
 
-        return click_prompt
+        return click_prompt, click_qmask
     
 
 class FlexOPTForCausalLM(OPTForCausalLM):
@@ -2043,23 +2059,30 @@ class FlexOPTForCausalLM(OPTForCausalLM):
     def __init__(self, config):
         super().__init__(config)
         self.model = FlexOPTModel(config)
-        # self.prompt_encoder = PromptEncoder()
+        self.prompt_encoder = PromptEncoder()
         self.tokenizer = AutoTokenizer.from_pretrained('ckpts/opt-model')
 
         # the lm_head weight is automatically tied to the embed tokens weight
         self.lm_head = nn.Linear(config.word_embed_proj_dim, config.vocab_size, bias=False)
         self.use_ll3da_scene_token = config.use_ll3da_scene_token
-        in_channel = 768+3 if not config.use_ll3da_scene_token else 256
-        self.scene_token_in_head = nn.Linear(in_channel, config.hidden_size, bias=False)
+        in_channel = 768 if not config.use_ll3da_scene_token else 256
+        # self.scene_token_in_head = nn.Linear(in_channel, in_channel, bias=False)
         if not config.use_ll3da_scene_token:
             self.encoder = self._build_mask_transformer_encoder(config)
 
+        self.encoder_to_llm_projection = nn.Sequential(
+            nn.Linear(in_channel, 2048),
+            nn.ReLU(),
+            nn.Linear(2048, 2048),
+            nn.ReLU(),
+        )
+        
         self.post_init()
     
     def _build_mask_transformer_encoder(self, config):
         import math
         encoder_layer = TransformerEncoderLayer(
-            d_model=config.hidden_size,
+            d_model=768,
             nhead=4,
             dim_feedforward=128,
             dropout=0.1,
@@ -2078,16 +2101,17 @@ class FlexOPTForCausalLM(OPTForCausalLM):
     
     def _run_mask_tranformer_encoder(self, scene_tokens, xyz):
         if self.use_ll3da_scene_token:
-            enc_features = self.scene_token_in_head(scene_tokens)
+            enc_features = self.encoder_to_llm_projection(scene_tokens)
             return enc_features
         
-        pre_enc_features = self.scene_token_in_head(scene_tokens)
+        # pre_enc_features = self.scene_token_in_head(scene_tokens)
         ## expects npoints x batch x channel features
-        pre_enc_features = pre_enc_features.permute(1, 0, 2)
+        pre_enc_features = scene_tokens.permute(1, 0, 2)
         enc_xyz, enc_features, enc_inds = self.encoder(
             pre_enc_features, xyz=xyz
         )
         enc_features = enc_features.permute(1, 0, 2)
+        enc_features = self.encoder_to_llm_projection(enc_features)
         return enc_features
     
     @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
@@ -2204,6 +2228,7 @@ class FlexOPTForCausalLM(OPTForCausalLM):
             batch_data_label = copy.deepcopy(self.batch_data_label)
         xyz = batch_data_label['scene_xyz'] if 'scene_xyz' in batch_data_label else torch.zeros(1).to(inputs_embeds.device)
         pre_enc_features = self._run_mask_tranformer_encoder(batch_data_label['scene_tokens'], xyz)
+        
         # batch_data_label['dense_region_tokens'] = self.scene_token_in_head(batch_data_label['dense_region_tokens'])
         
         # batch_data_label['dense_region_tokens'] = self._run_mask_tranformer_encoder(batch_data_label['dense_region_tokens'].view(-1, 10, 771), batch_data_label['dense_region_xyz'].view(-1, 10, 3))
@@ -2217,23 +2242,18 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         pre_enc_features_mask = torch.ones_like(pre_enc_features[..., 0])
         
         if past_key_values is None :
-            # if batch_data_label['click_mask'][0, 0].item() == 1:
-            #     click_query = batch_data_label['click_query'][:, 0, :]
-            #     click_query = click_query.unsqueeze(1)
-            #     point_cloud_dims = [
-            #         batch_data_label["point_cloud_dims_min"],
-            #         batch_data_label["point_cloud_dims_max"],
-            #     ]
-            #     prompt_embeds = self.prompt_encoder(point_cloud_dims, click_query)
-            #     prompt_mask = torch.ones_like(prompt_embeds[..., 0])
-                
-            #     inputs_embeds = torch.cat([pre_enc_features, prompt_embeds, inputs_embeds], dim=1)
-            #     attention_mask = torch.cat([pre_enc_features_mask, prompt_mask, attention_mask], dim=1)
-            #     self.prefix_len = pre_enc_features.shape[1] + prompt_embeds.shape[1]
-            # else:
-            inputs_embeds = torch.cat([pre_enc_features, inputs_embeds], dim=1)
-            attention_mask = torch.cat([pre_enc_features_mask, attention_mask], dim=1)
-            self.prefix_len = pre_enc_features.shape[1]
+            click_query = batch_data_label['click_query']
+            click_mask = batch_data_label['click_mask']
+            point_cloud_dims = [
+                batch_data_label["point_cloud_dims_min"],
+                batch_data_label["point_cloud_dims_max"],
+            ]
+            prompt_embeds, prompt_mask = self.prompt_encoder(point_cloud_dims, click_query, click_mask)
+            
+            inputs_embeds = torch.cat([pre_enc_features, prompt_embeds, inputs_embeds], dim=1)
+            attention_mask = torch.cat([pre_enc_features_mask, prompt_mask, attention_mask], dim=1)
+            self.prefix_len = pre_enc_features.shape[1] + prompt_embeds.shape[1]
+
         
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model.decoder(
@@ -2325,11 +2345,11 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         
         import os
-        self.scan_name_list = os.listdir('/mnt/nfs/share/Adaptive/test')
+        p = '/mnt/nfs/share/Adaptive/0420_openscene_scene_tokens_axis_align_w_pcd_info_s_512_0.2_128'
+        self.scan_name_list = os.listdir(p)
         scan_name = batch_data_label['scan_name'][0]
-        ot_dir = f'/mnt/nfs/share/Adaptive/test/{scan_name}'
-        if not os.path.exists(ot_dir):
-            os.makedirs(ot_dir, exist_ok=True)
+        ot_dir = f'{p}/{scan_name}'
+        os.makedirs(ot_dir, exist_ok=True)
         from third_party.pointnet2.pointnet2_modules import  PointnetSAModuleVotes_WoMlp
         from third_party.pointnet2.pointnet2_utils import ball_query
         from tqdm import tqdm
@@ -2345,12 +2365,14 @@ class FlexOPTForCausalLM(OPTForCausalLM):
             nsample=self.config.scene_token_sample_num_per_ball,
             npoint=self.config.scene_token_num,
             normalize_xyz=True,
+            use_xyz=False
         )
         region_tokenizer = PointnetSAModuleVotes_WoMlp(
             radius=self.config.region_token_sample_radius,
             nsample=self.config.region_token_sample_num_per_ball,
             npoint=self.config.region_token_sample_num,
             normalize_xyz=True,
+            use_xyz=False
         )
         region_radius = self.config.region_radius
         region_nsample = self.config.region_sample_num
@@ -2366,14 +2388,10 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         features = features.transpose(1, 2).contiguous()
         xyz = batch_data_label['openscene_sparse_pcd']
         
-        point_cloud_dims_min = xyz[..., :3].min(dim=0)
-        point_cloud_dims_max = xyz[..., :3].max(dim=0)
         
         other_pcd_info = {
-            'point_cloud_dims_min': point_cloud_dims_min.values,
-            'point_cloud_dims_max': point_cloud_dims_max.values,
-            'instance_labels' : instance_labels
-            
+            'instance_labels' : instance_labels ,
+            'point_clouds': xyz, 
         }
         
         pre_enc_xyz, pre_enc_features, pre_enc_inds = scene_tokenizer(xyz, features)
@@ -2384,6 +2402,7 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         torch.save(pre_enc_inds, f'{ot_dir}/enc_inds.pt')
         torch.save(pre_enc_xyz, f'{ot_dir}/enc_xyz.pt')
         torch.save(pre_enc_features, f'{ot_dir}/enc_features.pt')
+        torch.save(other_pcd_info, f'{ot_dir}/other_pcd_info.pt')
         
         
         ## visualization
@@ -2396,29 +2415,29 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         # sparse_vis_pcd.colors = open3d.utility.Vector3dVector(colors)
         # open3d.visualization.draw_geometries([sparse_vis_pcd])
         
-        for ri, r_xyz in tqdm(enumerate(pre_enc_xyz.squeeze(0))):
-            idx = ball_query(region_radius, region_nsample, dense_scene_xyz, r_xyz.unsqueeze(0).unsqueeze(0)).long()
-            unique_cnt = torch.zeros((idx.shape[0], idx.shape[1]))
-            for i_batch in range(idx.shape[0]):
-                for i_region in range(idx.shape[1]):
-                    unique_ind = torch.unique(idx[i_batch, i_region, :])
-                    num_unique = unique_ind.shape[0]
-                    unique_cnt[i_batch, i_region] = num_unique
-                    sample_ind = torch.randint(0, num_unique, (region_nsample - num_unique,), dtype=torch.long)
-                    all_ind = torch.cat((unique_ind, unique_ind[sample_ind]))
-                    idx[i_batch, i_region, :] = all_ind
-            idx.squeeze_(1)
+        # for ri, r_xyz in tqdm(enumerate(pre_enc_xyz.squeeze(0))):
+        #     idx = ball_query(region_radius, region_nsample, dense_scene_xyz, r_xyz.unsqueeze(0).unsqueeze(0)).long()
+        #     unique_cnt = torch.zeros((idx.shape[0], idx.shape[1]))
+        #     for i_batch in range(idx.shape[0]):
+        #         for i_region in range(idx.shape[1]):
+        #             unique_ind = torch.unique(idx[i_batch, i_region, :])
+        #             num_unique = unique_ind.shape[0]
+        #             unique_cnt[i_batch, i_region] = num_unique
+        #             sample_ind = torch.randint(0, num_unique, (region_nsample - num_unique,), dtype=torch.long)
+        #             all_ind = torch.cat((unique_ind, unique_ind[sample_ind]))
+        #             idx[i_batch, i_region, :] = all_ind
+        #     idx.squeeze_(1)
             
-            interest_dense_scene_xyz = torch.stack([dense_scene_xyz[i, idx[i], :] for i in range(len(idx))], dim=0)
-            interest_dense_scene_fts = torch.stack([dense_scene_fts[i, idx[i], :] for i in range(len(idx))], dim=0)
-            interest_dense_scene_fts = interest_dense_scene_fts.transpose(1, 2).contiguous()
-            pre_reg_xyz, pre_reg_features, pre_reg_inds = region_tokenizer(interest_dense_scene_xyz, interest_dense_scene_fts)
+        #     interest_dense_scene_xyz = torch.stack([dense_scene_xyz[i, idx[i], :] for i in range(len(idx))], dim=0)
+        #     interest_dense_scene_fts = torch.stack([dense_scene_fts[i, idx[i], :] for i in range(len(idx))], dim=0)
+        #     interest_dense_scene_fts = interest_dense_scene_fts.transpose(1, 2).contiguous()
+        #     pre_reg_xyz, pre_reg_features, pre_reg_inds = region_tokenizer(interest_dense_scene_xyz, interest_dense_scene_fts)
             
-            torch.save(pre_reg_inds, f'{ot_dir}/region_inds_{ri}.pt')
-            torch.save(pre_reg_xyz, f'{ot_dir}/region_xyz_{ri}.pt')
-            torch.save(pre_reg_features.transpose(1,2), f'{ot_dir}/region_features_{ri}.pt')
+        #     torch.save(pre_reg_inds, f'{ot_dir}/region_inds_{ri}.pt')
+        #     torch.save(pre_reg_xyz, f'{ot_dir}/region_xyz_{ri}.pt')
+        #     torch.save(pre_reg_features.transpose(1,2), f'{ot_dir}/region_features_{ri}.pt')
             
-        assert len(os.listdir(ot_dir)) == 512 * 3 + 3
+        # assert len(os.listdir(ot_dir)) == 512 * 3 + 3
             
             # dense_vis_pcd = open3d.geometry.PointCloud()
             # dense_vis_pcd.points = open3d.utility.Vector3dVector(dense_scene_xyz[0].cpu().numpy())

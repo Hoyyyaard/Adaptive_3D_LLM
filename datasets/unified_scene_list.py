@@ -71,7 +71,7 @@ class Dataset(ScanNetBaseDataset):
         # self._tag_dataset(self.annotations, 'qa')
         
         from src.openscene_dense_pcd_fts_cache import OpenScene_Fts_Cache
-        self.openscene_fts_cache = OpenScene_Fts_Cache()
+        self.openscene_fts_cache = OpenScene_Fts_Cache(cache_dir=args.openscene_cache_dir)
     
     def _tag_dataset(self, corpus, task_name): 
         for anno in corpus:
