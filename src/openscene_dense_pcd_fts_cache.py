@@ -18,7 +18,7 @@ class LL3DA_Fts_Cache():
         scene_xyz = scene_xyz[0]
         return {
             'scene_tokens': scene_tokens.astype(np.float32),
-            'scene_xyz': scene_xyz.astype(np.float32),
+            # 'scene_xyz': scene_xyz.astype(np.float32),
         }
         
 

@@ -253,7 +253,7 @@ class Dataset(ScanNetBaseDataset):
             click_query = np.zeros((self.max_prompts, 3))
             click_mask = np.zeros((self.max_prompts,))
             
-            if self.args.finetune_flex_opt:
+            if self.args.finetune_flex_opt or self.args.abl_ll3da_w_openscene_token:
                 ## TODO: 检查openscene的点云和ll3da的是否一致
                 try:
                     point_clouds = ret_dict["point_clouds"][:, :3]  # x, y, z
@@ -301,7 +301,11 @@ class Dataset(ScanNetBaseDataset):
             else:
                 ret_dict.update(self.openscene_fts_cache.get_openscene_scan_datas(scan_name, preprocess=self.args.token_preprocess))
             ret_dict['scan_name'] = scan_name
-            
+        
+        
+        if self.args.abl_ll3da_w_openscene_token:
+            ret_dict['enc_features'] = torch.load(f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_for_ll3da/{scan_name}/enc_features.pt', map_location='cpu').numpy()[0].astype(np.float32)
+            ret_dict['enc_xyz'] = torch.load(f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_for_ll3da/{scan_name}/enc_xyz.pt', map_location='cpu').numpy()[0].astype(np.float32)
         return ret_dict
    
    

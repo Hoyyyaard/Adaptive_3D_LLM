@@ -2202,7 +2202,8 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         ## get sparse scene object tokens from openscene_sparse_fts by set abstract layer here
         if batch_data_label is None:
             batch_data_label = copy.deepcopy(self.batch_data_label)
-        pre_enc_features = self._run_mask_tranformer_encoder(batch_data_label['scene_tokens'], batch_data_label['scene_xyz'])
+        xyz = batch_data_label['scene_xyz'] if 'scene_xyz' in batch_data_label else torch.zeros(1).to(inputs_embeds.device)
+        pre_enc_features = self._run_mask_tranformer_encoder(batch_data_label['scene_tokens'], xyz)
         # batch_data_label['dense_region_tokens'] = self.scene_token_in_head(batch_data_label['dense_region_tokens'])
         
         # batch_data_label['dense_region_tokens'] = self._run_mask_tranformer_encoder(batch_data_label['dense_region_tokens'].view(-1, 10, 771), batch_data_label['dense_region_xyz'].view(-1, 10, 3))

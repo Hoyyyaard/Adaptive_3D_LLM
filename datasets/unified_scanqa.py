@@ -231,7 +231,7 @@ class Dataset(ScanNetBaseDataset):
         click_mask = np.zeros((self.max_prompts,))
         
         
-        if self.split == 'train' and random.random() < 0.25:
+        if self.split == 'train' and random.random() < 0.25 and not self.args.abl_ll3da_w_openscene_token:
             try:
                 target_obj_id = random.choice(self.annotations[idx]['object_ids'])
                 try:
@@ -279,7 +279,11 @@ class Dataset(ScanNetBaseDataset):
             
             
         ret_dict['scan_name'] = scan_name
-            
+        
+        
+        if self.args.abl_ll3da_w_openscene_token:
+            ret_dict['enc_features'] = torch.load(f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_for_ll3da/{scan_name}/enc_features.pt', map_location='cpu').numpy()[0].astype(np.float32)
+            ret_dict['enc_xyz'] = torch.load(f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_for_ll3da/{scan_name}/enc_xyz.pt', map_location='cpu').numpy()[0].astype(np.float32)
         ## USer: below are used for debug
         # del ret_dict["instance_labels"]
         

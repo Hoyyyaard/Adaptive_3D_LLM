@@ -26,6 +26,9 @@ class CaptionNet(nn.Module):
         self.detector = None
         self.captioner = None
         
+        if args.abl_ll3da_w_openscene_token:
+            self.openscene2ll3da_head = nn.Linear(771, 256)
+        
         if args.detector is not None:
             detector_module = importlib.import_module(
                 f'models.{args.detector}.detector'
@@ -44,12 +47,18 @@ class CaptionNet(nn.Module):
         
         outputs = {'loss': torch.zeros(1)[0].cuda()}
         
-        if self.detector is not None:
+        abl_ll3da_w_openscene_token = os.getenv('abl_ll3da_w_openscene_token', 'False')
+        if self.detector is not None and not abl_ll3da_w_openscene_token == 'True':
             if self.freeze_detector is True:
                 outputs = self.detector(batch_data_label, is_eval=True)
             else:
                 outputs = self.detector(batch_data_label, is_eval=is_eval)
-        
+        else:
+            outputs['enc_features'] = self.openscene2ll3da_head(batch_data_label['enc_features'])
+            outputs['enc_xyz'] = batch_data_label['enc_xyz']
+            outputs['sem_cls_logits'] = torch.zeros((batch_data_label['enc_xyz'].shape[0], 256, 128)).to(batch_data_label['enc_xyz'].device)
+            batch_data_label['box_query'] = None
+            
         if task_name == 'preprocess':
             return outputs
         
@@ -60,6 +69,7 @@ class CaptionNet(nn.Module):
             outputs['loss'] = torch.zeros(1)[0].cuda()
         # elif self.freeze_detector is False and os.getenv('adaptive_pcd_input') == 'True':
         #     outputs['loss'] = torch.zeros(1)[0].cuda()
+        
         
         if self.captioner is not None:
             outputs = self.captioner(

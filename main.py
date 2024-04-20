@@ -151,6 +151,9 @@ def make_args_parser():
     ## use ll3da scene token instead of openscene token
     parser.add_argument("--use_ll3da_scene_token", action='store_true')
     
+    ## use openscene token instead of ll3da scene token for ll3da
+    parser.add_argument("--abl_ll3da_w_openscene_token", action='store_true')
+    
     
     args = parser.parse_args()
     args.use_height = not args.no_height
@@ -179,6 +182,9 @@ def make_args_parser():
     print(f'finetune_opt1_3b: ', args.finetune_opt1_3b)
     print(f'll3da_token_preprocess: ', args.ll3da_token_preprocess)
     print(f'use_ll3da_scene_token: ', args.use_ll3da_scene_token)
+    print(f'abl_ll3da_w_openscene_token: ', args.abl_ll3da_w_openscene_token)
+    if args.abl_ll3da_w_openscene_token:
+        os.environ['abl_ll3da_w_openscene_token'] = 'True'
     return args
 
 
@@ -334,13 +340,14 @@ def main(local_rank, args):
         ### whether or not use pretrained weights
         if args.pretrained_weights is not None:
             checkpoint = torch.load(args.pretrained_weights, map_location="cpu")
-            model.load_state_dict(checkpoint['model'], strict=False)
+            msg = model.load_state_dict(checkpoint['model'], strict=False)
+            print(msg)
             
-            print('====                                          ====')
-            print('==== loading following pre-trained parameters ====')
-            print('====                                          ====')
-            for name, param in checkpoint['model'].items():
-                print('\t', name, param.shape)
+            # print('====                                          ====')
+            # print('==== loading following pre-trained parameters ====')
+            # print('====                                          ====')
+            # for name, param in checkpoint['model'].items():
+            #     print('\t', name, param.shape)
         
         if not args.preprocess_pcd:
             model_no_ddp = model.cuda()
