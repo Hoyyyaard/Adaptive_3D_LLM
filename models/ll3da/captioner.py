@@ -276,7 +276,7 @@ class captioner(nn.Module):
             attention_mask=query_attention_mask,
             query_embeds=query_tokens,
             encoder_hidden_states=self.encoder_to_qformer_projection(encoder_hidden_states),
-            # output_attentions=True
+            output_attentions=True
         )
         
         query_outputs_latent = query_outputs[0][:, : self.nlatent_query, :]

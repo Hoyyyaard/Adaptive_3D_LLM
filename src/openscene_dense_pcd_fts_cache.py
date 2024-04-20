@@ -84,7 +84,7 @@ class OpenScene_Fts_Cache():
             
             return output_dict
         else:
-            cache_dir = f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_w_sm_obj_0.2_r_0.25_10_0.05_500/{scan_name}'
+            cache_dir = f'{self.cache_dir}/{scan_name}'
             scene_tokens = torch.load(f'{cache_dir}/enc_features.pt', map_location='cpu').numpy().astype(np.float32),
             scene_tokens = scene_tokens[0][0]
             scene_xyz = torch.load(f'{cache_dir}/enc_xyz.pt', map_location='cpu').numpy().astype(np.float32)

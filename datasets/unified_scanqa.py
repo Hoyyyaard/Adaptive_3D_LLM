@@ -139,7 +139,7 @@ class Dataset(ScanNetBaseDataset):
         self.dense_train_info = {}
         self.dense_ret_dicts = {}
         from src.openscene_dense_pcd_fts_cache import OpenScene_Fts_Cache, LL3DA_Fts_Cache
-        self.openscene_fts_cache = OpenScene_Fts_Cache()
+        self.openscene_fts_cache = OpenScene_Fts_Cache(cache_dir=args.openscene_cache_dir)
         self.ll3da_fts_cache = LL3DA_Fts_Cache()
     
     def _tag_dataset(self, corpus, task_name): 

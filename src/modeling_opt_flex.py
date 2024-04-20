@@ -1925,10 +1925,10 @@ class FlexOPTDecoder(OPTDecoder):
                 all_self_attns += (layer_outputs[1],)
                 
                 
-        hidden_states.requires_grad_(True)
-        for k ,v in dense_pcd_info.items():
-            if v.dtype == torch.float32:
-                v.requires_grad_(True)        
+        # hidden_states.requires_grad_(True)
+        # for k ,v in dense_pcd_info.items():
+        #     if v.dtype == torch.float32:
+        #         v.requires_grad_(True)        
         for idx, decoder_layer in enumerate(self.flex_layers):
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
             if output_hidden_states:
@@ -2365,10 +2365,21 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         ## get sparse scene object tokens from openscene_sparse_fts by set abstract layer here
         features = features.transpose(1, 2).contiguous()
         xyz = batch_data_label['openscene_sparse_pcd']
+        
+        point_cloud_dims_min = xyz[..., :3].min(dim=0)
+        point_cloud_dims_max = xyz[..., :3].max(dim=0)
+        
+        other_pcd_info = {
+            'point_cloud_dims_min': point_cloud_dims_min.values,
+            'point_cloud_dims_max': point_cloud_dims_max.values,
+            'instance_labels' : instance_labels
+            
+        }
+        
         pre_enc_xyz, pre_enc_features, pre_enc_inds = scene_tokenizer(xyz, features)
         pre_enc_features = pre_enc_features.transpose(1, 2).contiguous()
         
-        token_instance_label = instance_labels[:, pre_enc_inds[0].long()]
+        # token_instance_label = instance_labels[:, pre_enc_inds[0].long()]
         
         torch.save(pre_enc_inds, f'{ot_dir}/enc_inds.pt')
         torch.save(pre_enc_xyz, f'{ot_dir}/enc_xyz.pt')

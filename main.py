@@ -154,6 +154,8 @@ def make_args_parser():
     ## use openscene token instead of ll3da scene token for ll3da
     parser.add_argument("--abl_ll3da_w_openscene_token", action='store_true')
     
+    parser.add_argument("--openscene_cache_dir", required=True)
+    
     
     args = parser.parse_args()
     args.use_height = not args.no_height
