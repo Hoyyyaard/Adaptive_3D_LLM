@@ -50,6 +50,9 @@ class CaptionNet(nn.Module):
             else:
                 outputs = self.detector(batch_data_label, is_eval=is_eval)
         
+        if task_name == 'preprocess':
+            return outputs
+        
         if train_encoder is True:
             return outputs
         

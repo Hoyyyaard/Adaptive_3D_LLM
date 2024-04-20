@@ -58,7 +58,7 @@ cache = OpenScene_Fts_Cache()
 scene_list = os.listdir('/mnt/nfs/share/datasets/scannet/scans')
 
 prompt = 'chair'
-ckpt_path = 'ckpts/opt-1.3b/nipus_exp/encoder-openscene-maskformer-axis-align-w-sm-obj-wocausal/checkpoint_32k.pth'
+ckpt_path = 'ckpts/opt-1.3b/nipus_exp/encoder-openscene-maskformer-axis-align-w-sm-obj-wocausal-finetune-opt-1-3b/checkpoint.pth'
 
 
 msg = model.model.load_state_dict(torch.load(ckpt_path, map_location='cpu')['model'], strict=False)
@@ -78,10 +78,10 @@ for scan_name in scene_list:
     dense_region_xyz = openscene_info['dense_region_xyz']
 
     with torch.no_grad():
-        scene_tokens = torch.from_numpy(scene_tokens).cuda().unsqueeze(0)
-        scene_xyz = torch.from_numpy(scene_xyz).cuda().unsqueeze(0)
-        dense_region_tokens = torch.from_numpy(dense_region_tokens).cuda().unsqueeze(0)
-        dense_region_xyz = torch.from_numpy(dense_region_xyz).cuda().unsqueeze(0)
+        scene_tokens = torch.from_numpy(scene_tokens).cuda().unsqueeze(0).half()
+        scene_xyz = torch.from_numpy(scene_xyz).cuda().unsqueeze(0).half()
+        dense_region_tokens = torch.from_numpy(dense_region_tokens).cuda().unsqueeze(0).half()
+        dense_region_xyz = torch.from_numpy(dense_region_xyz).cuda().unsqueeze(0).half()
 
         ## extract scene tokens fts 
         scene_tokens_fts = model.model._run_mask_tranformer_encoder(scene_tokens, scene_xyz)
@@ -89,7 +89,7 @@ for scan_name in scene_list:
         ## extraxt text fts
         text_token = model.model.tokenizer(prompt, return_tensors="pt")
         embedding_layer = model.model.get_input_embeddings()
-        text_fts = embedding_layer(text_token['input_ids'][: , 1].unsqueeze(0).cuda())
+        text_fts = embedding_layer(text_token['input_ids'][: , 1].unsqueeze(0).cuda()).half()
 
         ## calculate softmax similarity
         scene_tokens_fts = scene_tokens_fts / scene_tokens_fts.norm(dim=-1, keepdim=True)

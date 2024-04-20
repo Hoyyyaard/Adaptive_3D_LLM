@@ -95,6 +95,7 @@ def evaluate(
     ### initialize and prepare for evaluation
     tokenizer = dataset_loader.dataset.tokenizer
     net_device = next(model.parameters()).device
+    net_dtype = next(model.parameters()).dtype
     num_batches = len(dataset_loader)
 
     time_delta = SmoothedValue(window_size=10)
@@ -110,10 +111,12 @@ def evaluate(
         pbar.update(1)
         curr_time = time.time()
         for key in batch_data_label:
-            if isinstance(batch_data_label[key], list):
-                batch_data_label[key] = batch_data_label[key]
-            else:
+            if not isinstance(batch_data_label[key], list):
                 batch_data_label[key] = batch_data_label[key].to(net_device)
+                if batch_data_label[key].dtype == torch.float32:
+                    batch_data_label[key] = batch_data_label[key].to(net_dtype)
+            else:
+                batch_data_label[key] = batch_data_label[key]
         
         model_input = {
             'point_clouds': batch_data_label['point_clouds'],

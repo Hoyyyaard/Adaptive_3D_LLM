@@ -3,7 +3,11 @@ export CUDA_VISIBLE_DEVICES=1,2,3,4,5,6,7
 export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export OMP_NUM_THREADS=1
+# NCCL_DEBUG=INFO NCCL_SOCKET_IFNAME=eno1 NCCL_IB_DISABLE=1 NCCL_P2P_DISABLE=1 
 
+# python -m torch.distributed.launch --nproc_per_node=7 \
+#            --nnodes=2 --node_rank=0 --master_addr="172.16.0.3" \
+#            --master_port=12445 \
 python main.py \
     --use_color --use_normal \
     --detector detector_Vote2Cap_DETR \

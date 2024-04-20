@@ -2048,8 +2048,11 @@ class FlexOPTForCausalLM(OPTForCausalLM):
 
         # the lm_head weight is automatically tied to the embed tokens weight
         self.lm_head = nn.Linear(config.word_embed_proj_dim, config.vocab_size, bias=False)
-        self.scene_token_in_head = nn.Linear(768+3, config.hidden_size, bias=False)
-        self.encoder = self._build_mask_transformer_encoder(config)
+        self.use_ll3da_scene_token = config.use_ll3da_scene_token
+        in_channel = 768+3 if not config.use_ll3da_scene_token else 256
+        self.scene_token_in_head = nn.Linear(in_channel, config.hidden_size, bias=False)
+        if not config.use_ll3da_scene_token:
+            self.encoder = self._build_mask_transformer_encoder(config)
 
         self.post_init()
     
@@ -2074,6 +2077,10 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         return encoder
     
     def _run_mask_tranformer_encoder(self, scene_tokens, xyz):
+        if self.use_ll3da_scene_token:
+            enc_features = self.scene_token_in_head(scene_tokens)
+            return enc_features
+        
         pre_enc_features = self.scene_token_in_head(scene_tokens)
         ## expects npoints x batch x channel features
         pre_enc_features = pre_enc_features.permute(1, 0, 2)
@@ -2235,11 +2242,11 @@ class FlexOPTForCausalLM(OPTForCausalLM):
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
-            output_attentions=output_attentions,
+            output_attentions=True,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             dense_pcd_info={
-                'dense_region_tokens':batch_data_label['dense_region_tokens'],
+                'dense_region_tokens':batch_data_label['dense_region_tokens'] if 'dense_region_tokens' in batch_data_label else torch.zeros(1).to(inputs_embeds.device),
             }
         )
 
@@ -2250,7 +2257,7 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         #     self.new_token_idx = 0
         # assert outputs['attentions'][0].shape[0] == 1
         # attn = torch.cat(outputs['attentions'], dim=0)
-        # attn = attn[:, :, -1, :]
+        # # attn = attn[:, :, :, :]
         # task_name = batch_data_label['task_name']
         # attn_dict = {
         #     'attn_weight' : attn,
@@ -2259,7 +2266,7 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         #     'scan_name': batch_data_label['scan_name']
         # }
         # scan_idx = batch_data_label['scan_idx'].item()
-        # op_path = f'results/attn_vis_flex/encoder-openscene-maskformer-axis-align-w-sm-obj-wocausal/32k/{task_name}/{scan_idx}'
+        # op_path = f'results/attn_vis_flex/encoder-openscene-maskformer-axis-align-w-sm-obj-wocausal-finetune-opt-1-3b/4epoch/{task_name}/{scan_idx}'
         # if not os.path.exists(op_path):
         #     os.makedirs(op_path)
         # scan_idx = batch_data_label['scan_idx']
@@ -2317,9 +2324,9 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         
         import os
-        self.scan_name_list = os.listdir('/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_w_sm_obj_0.2_r_0.25_10_0.05_500')
+        self.scan_name_list = os.listdir('/mnt/nfs/share/Adaptive/test')
         scan_name = batch_data_label['scan_name'][0]
-        ot_dir = f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_w_sm_obj_0.2_r_0.25_10_0.05_500/{scan_name}'
+        ot_dir = f'/mnt/nfs/share/Adaptive/test/{scan_name}'
         if not os.path.exists(ot_dir):
             os.makedirs(ot_dir, exist_ok=True)
         from third_party.pointnet2.pointnet2_modules import  PointnetSAModuleVotes_WoMlp
@@ -2352,12 +2359,15 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         features = batch_data_label['openscene_sparse_fts']
         dense_scene_xyz = batch_data_label['openscene_dense_pcd']
         dense_scene_fts = batch_data_label['openscene_dense_fts']
+        instance_labels = batch_data_label['instance_labels']
         
         ## get sparse scene object tokens from openscene_sparse_fts by set abstract layer here
         features = features.transpose(1, 2).contiguous()
         xyz = batch_data_label['openscene_sparse_pcd']
         pre_enc_xyz, pre_enc_features, pre_enc_inds = scene_tokenizer(xyz, features)
         pre_enc_features = pre_enc_features.transpose(1, 2).contiguous()
+        
+        token_instance_label = instance_labels[:, pre_enc_inds[0].long()]
         
         torch.save(pre_enc_inds, f'{ot_dir}/enc_inds.pt')
         torch.save(pre_enc_xyz, f'{ot_dir}/enc_xyz.pt')
@@ -2646,7 +2656,7 @@ class Shell_Model(nn.Module):
                     }
                 self.model.set_batch_data_label_cache(data_label)
                 self.model.new_episode = True
-                output_ids = self.model.generate(input_ids = (input_ids[batch_id].unsqueeze(0)[attention_mask[batch_id].unsqueeze(0)==1].unsqueeze(0)), max_length=128)    
+                output_ids = self.model.generate(input_ids = (input_ids[batch_id].unsqueeze(0)[attention_mask[batch_id].unsqueeze(0)==1].unsqueeze(0)), max_length=max_length)    
                 output_ids = output_ids[:, len(input_ids[batch_id].unsqueeze(0)[attention_mask[batch_id].unsqueeze(0)==1]):][0] 
                 output_ids_list[batch_id][:len(output_ids)] = output_ids   
             return {'output_ids':  output_ids_list}

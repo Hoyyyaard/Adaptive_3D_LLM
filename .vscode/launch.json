@@ -346,7 +346,7 @@
             ],
             "env": {
                 "PYTHONWARNINGS":"ignore:semaphore_tracker:UserWarning",
-                "CUDA_VISIBLE_DEVICES":"1",
+                "CUDA_VISIBLE_DEVICES":"0",
                 "MKL_NUM_THREADS":"1",
                 "NUMEXPR_NUM_THREADS":"1",
                 "OMP_NUM_THREADS":"1",
@@ -442,7 +442,7 @@
                 "--use_normal",
                 "--detector", "detector_Vote2Cap_DETR",
                 "--captioner", "ll3da",
-                "--checkpoint_dir", "results/debug",
+                "--test_ckpt", "ckpts/opt-1.3b/nipus_exp/encoder-openscene-maskformer-axis-align-w-sm-obj-wocausal-finetune-opt-1-3b/checkpoint.pth",
                 "--dataset", "unified_scanqa",
                 "--vocab", "facebook/opt-1.3b",
                 "--qformer_vocab", "bert-base-embedding",
@@ -453,14 +453,14 @@
                 "--log_dir", "results/debug",
                 "--cache_dir","results/debug",
                 "--finetune_flex_opt",
-                "--finetune_flex_self_attn",
-                "--num_finetune_hidden_layers","4",
+                "--finetune_opt1_3b",
+                "--num_finetune_hidden_layers","0",
                 "--test_only"
 
             ],
             "env": {
                 "PYTHONWARNINGS":"ignore:semaphore_tracker:UserWarning",
-                "CUDA_VISIBLE_DEVICES":"1",
+                "CUDA_VISIBLE_DEVICES":"0",
                 "MKL_NUM_THREADS":"1",
                 "NUMEXPR_NUM_THREADS":"1",
                 "OMP_NUM_THREADS":"1",
@@ -510,7 +510,7 @@
             "name": "vis encoder fts",
             "type": "python",
             "request": "launch",
-            "program": "src/visualization_encoder_fts.py",
+            "program": "src/visualization_flex_attn.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "python": "/home/admin/micromamba/envs/ll3da/bin/python",
@@ -519,11 +519,92 @@
             ],
             "env": {
                 "PYTHONWARNINGS":"ignore:semaphore_tracker:UserWarning",
-                "CUDA_VISIBLE_DEVICES":"1",
+                "CUDA_VISIBLE_DEVICES":"0",
                 "MKL_NUM_THREADS":"1",
                 "NUMEXPR_NUM_THREADS":"1",
                 "OMP_NUM_THREADS":"1",
                 "DISPLAY":"localhost:14.0"
+            }
+        },
+        {
+            "name": "preprocess ll3da scene token",
+            "type": "python",
+            "request": "launch",
+            "program": "main.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "python": "/home/admin/micromamba/envs/ll3da/bin/python",
+            "args": [
+                "--use_color",
+                "--use_normal",
+                "--detector", "detector_Vote2Cap_DETR",
+                "--captioner", "ll3da",
+                "--pretrained_weights", "pretrained/vote2cap-detr/scannet_vote2cap_detr_XYZ_COLOR_NORMAL.pth",
+                "--checkpoint_dir", "results/debug", 
+                "--dataset", "unified_scene_list",
+                "--vocab", "facebook/opt-1.3b",
+                "--qformer_vocab", "bert-base-embedding",
+                "--dist_url", "tcp://localhost:12345",
+                "--freeze_llm",
+                "--freeze_detector",
+                "--batchsize_per_gpu", "1",
+                "--ngpus", "1",
+                "--max_des_len", "256",
+                "--max_prompt", "1",
+                "--use_beam_search",
+                "--criterion", "CiDEr@0.5",
+                "--cache_dir", "results/debug",
+                "--ll3da_token_preprocess",
+                "--num_finetune_hidden_layers","0",
+                "--max_epoch","1"
+
+            ],
+            "env": {
+                "PYTHONWARNINGS":"ignore:semaphore_tracker:UserWarning",
+                "CUDA_VISIBLE_DEVICES":"5",
+                "MKL_NUM_THREADS":"1",
+                "NUMEXPR_NUM_THREADS":"1",
+                "OMP_NUM_THREADS":"1",
+                "DISPLAY":"localhost:10.0"
+            }
+        },
+        {
+            "name": "finetune flex attn use ll3da token",
+            "type": "python",
+            "request": "launch",
+            "program": "main.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "python": "/home/admin/micromamba/envs/ll3da/bin/python",
+            "args": [
+                "--use_color",
+                "--use_normal",
+                "--detector", "detector_Vote2Cap_DETR",
+                "--captioner", "ll3da",
+                "--checkpoint_dir", "results/debug",
+                "--pretrained_weights", "ckpts/opt-model/pytorch_model.bin",
+                "--dataset", "unified_scanqa",
+                "--vocab", "facebook/opt-1.3b",
+                "--qformer_vocab", "bert-base-embedding",
+                "--dist_url", "tcp://localhost:12345",
+                "--batchsize_per_gpu", "1",
+                "--ngpus", "1",
+                "--use_beam_search",
+                "--log_dir", "results/scanqa/vis_flex_attn",
+                "--cache_dir","results/debug",
+                "--finetune_flex_opt",
+                "--finetune_opt1_3b",
+                "--use_ll3da_scene_token",
+                "--num_finetune_hidden_layers","0"
+
+            ],
+            "env": {
+                "PYTHONWARNINGS":"ignore:semaphore_tracker:UserWarning",
+                "CUDA_VISIBLE_DEVICES":"1",
+                "MKL_NUM_THREADS":"1",
+                "NUMEXPR_NUM_THREADS":"1",
+                "OMP_NUM_THREADS":"1",
+                "DISPLAY":"localhost:10.0"
             }
         },
     ]

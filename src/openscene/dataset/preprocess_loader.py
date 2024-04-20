@@ -71,7 +71,7 @@ class FusedFeatureLoader(Point3DLoader):
         locs_in, feats_in, labels_in = torch.load(self.data_paths[index])
         
         ## openscene 的坐标没有转换到scannet
-        # scan_name = self.data_paths[index][:-15].split('/')[-1]
+        scan_name = self.data_paths[index][:-15].split('/')[-1]
         # import os
         # opcd = np.load(os.path.join('/home/admin/Projects/LL3DA/data/scannet/scannet_data_w_sm_obj_dense', scan_name + '_ins_label.npy'))
         # assert opcd.shape[0] == locs_in.shape[0]

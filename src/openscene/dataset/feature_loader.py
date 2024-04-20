@@ -96,20 +96,20 @@ class FusedFeatureLoader(Point3DLoader):
                 else:
                     print(scan_name)
                     
-                sm_obj_pcd_p = f'/home/admin/Projects/EmbodiedScan/data/small_size_object/pcd/{scan_name}'
-                sm_pcs = []
-                sm_colors = []
-                if os.path.exists(sm_obj_pcd_p):
-                    for p in os.listdir(sm_obj_pcd_p):
-                        opcd = open3d.io.read_point_cloud(os.path.join(sm_obj_pcd_p, p))
-                        sm_pcs.extend(np.asarray(opcd.points).tolist())
-                        sm_colors.extend(np.asarray(opcd.colors).tolist())
-                    if len(sm_pcs) > 0:
-                        sm_pcs = np.array(sm_pcs)
-                        sm_colors = np.array(sm_colors)
-                        locs_in = np.concatenate([locs_in, sm_pcs], axis=0)
-                        feats_in = np.concatenate([feats_in, sm_colors], axis=0)
-                        labels_in = np.concatenate([labels_in, np.ones(sm_pcs.shape[0])*-100])
+                # sm_obj_pcd_p = f'/home/admin/Projects/EmbodiedScan/data/small_size_object/pcd/{scan_name}'
+                # sm_pcs = []
+                # sm_colors = []
+                # if os.path.exists(sm_obj_pcd_p):
+                #     for p in os.listdir(sm_obj_pcd_p):
+                #         opcd = open3d.io.read_point_cloud(os.path.join(sm_obj_pcd_p, p))
+                #         sm_pcs.extend(np.asarray(opcd.points).tolist())
+                #         sm_colors.extend(np.asarray(opcd.colors).tolist())
+                #     if len(sm_pcs) > 0:
+                #         sm_pcs = np.array(sm_pcs)
+                #         sm_colors = np.array(sm_colors)
+                #         locs_in = np.concatenate([locs_in, sm_pcs], axis=0)
+                #         feats_in = np.concatenate([feats_in, sm_colors], axis=0)
+                #         labels_in = np.concatenate([labels_in, np.ones(sm_pcs.shape[0])*-100])
                     
 
         # load 3D features

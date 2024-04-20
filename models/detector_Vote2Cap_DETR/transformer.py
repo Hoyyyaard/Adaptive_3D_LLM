@@ -158,7 +158,7 @@ class MaskedTransformerEncoder(TransformerEncoder):
             # entries that are True in the mask do not contribute to self-attention
             # so points outside the radius are not considered
             mask = dist >= radius
-        return mask.to(torch.float16), dist.to(torch.float16)
+        return mask.to(next(self.parameters()).dtype), dist.to(next(self.parameters()).dtype)
 
     def forward(self, src,
                 mask: Optional[Tensor] = None,

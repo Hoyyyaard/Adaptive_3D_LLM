@@ -138,8 +138,9 @@ class Dataset(ScanNetBaseDataset):
         ## USer
         self.dense_train_info = {}
         self.dense_ret_dicts = {}
-        from src.openscene_dense_pcd_fts_cache import OpenScene_Fts_Cache
+        from src.openscene_dense_pcd_fts_cache import OpenScene_Fts_Cache, LL3DA_Fts_Cache
         self.openscene_fts_cache = OpenScene_Fts_Cache()
+        self.ll3da_fts_cache = LL3DA_Fts_Cache()
     
     def _tag_dataset(self, corpus, task_name): 
         for anno in corpus:
@@ -271,7 +272,12 @@ class Dataset(ScanNetBaseDataset):
         # open3d.visualization.draw_geometries([objects_pcd])
         
         if self.args.finetune_flex_opt:
-            ret_dict.update(self.openscene_fts_cache.get_openscene_scan_datas(scan_name, preprocess=self.args.token_preprocess))
+            if self.args.use_ll3da_scene_token:
+                ret_dict.update(self.ll3da_fts_cache.get_ll3da_scan_datas(scan_name))
+            else:
+                ret_dict.update(self.openscene_fts_cache.get_openscene_scan_datas(scan_name, preprocess=self.args.token_preprocess))
+            
+            
         ret_dict['scan_name'] = scan_name
             
         ## USer: below are used for debug

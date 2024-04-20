@@ -146,6 +146,11 @@ def make_args_parser():
     ## fully finetune opt1.3b in stage 1
     parser.add_argument("--finetune_opt1_3b", action='store_true')
     
+    parser.add_argument("--ll3da_token_preprocess", action='store_true')
+    
+    ## use ll3da scene token instead of openscene token
+    parser.add_argument("--use_ll3da_scene_token", action='store_true')
+    
     
     args = parser.parse_args()
     args.use_height = not args.no_height
@@ -172,7 +177,8 @@ def make_args_parser():
     print(f'finetune_flex_self_attn: ', args.finetune_flex_self_attn)
     print(f'only_finetune_flex_attn: ', args.only_finetune_flex_attn)
     print(f'finetune_opt1_3b: ', args.finetune_opt1_3b)
-    
+    print(f'll3da_token_preprocess: ', args.ll3da_token_preprocess)
+    print(f'use_ll3da_scene_token: ', args.use_ll3da_scene_token)
     return args
 
 
@@ -268,6 +274,7 @@ def main(local_rank, args):
             dist_url=args.dist_url,
             dist_backend="nccl",
         )
+    
     
     torch.cuda.set_device(local_rank)
     np.random.seed(args.seed)
@@ -401,6 +408,13 @@ def finetune_flex_opt_main(local_rank, args):
             dist_backend="nccl",
         )
     
+    # rank = int(os.environ['RANK'])
+    # world_size = int(os.environ['WORLD_SIZE'])
+    # local_rank = int(os.environ['LOCAL_RANK'])
+
+    # # 初始化分布式环境
+    # dist.init_process_group(backend='nccl')
+    
     torch.cuda.set_device(local_rank)
     np.random.seed(args.seed)
     torch.cuda.manual_seed_all(args.seed + get_rank())
@@ -429,6 +443,7 @@ def finetune_flex_opt_main(local_rank, args):
         config.num_hidden_layers = config.num_finetune_hidden_layers + config.num_hidden_layers
         config.num_finetune_hidden_layers = 0
         print('============================freeze llm====================================')
+    config.use_ll3da_scene_token = args.use_ll3da_scene_token
     model = Shell_Model(config=config)
     
     if not args.freeze_flex_llm and not args.finetune_opt1_3b:
@@ -658,6 +673,7 @@ def launch_distributed(args):
         main_func(local_rank=0, args=args)
     else:
         torch.multiprocessing.spawn(main_func, nprocs=world_size, args=(args,))
+    # main_func(-1, args)
 
 if __name__ == "__main__":
     args = make_args_parser()

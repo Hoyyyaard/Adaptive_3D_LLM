@@ -6,8 +6,9 @@ import numpy as np
 import random
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+from sklearn.neighbors import BallTree
 
-attn_dir = 'results/attn_vis/qa'
+attn_dir = 'results/attn_vis_qformer/qa'
 exp_dir = 'results/toy_exp/scanqa/official/qa_pred_gt_val.json'
 
 
@@ -71,11 +72,14 @@ for qformer_x_attns_p in tqdm(attn_p_list):
     pred_info = new_qa_pred_gt[anno_info['question_id']]
     uid = anno_info['question_id'] + '-' + anno_info['question'].replace(' ', '_') + '-' + anno_info['answers'][0].replace(' ', '_')
     score = pred_info['score']
-    if not score['CiDEr'] < 0.1:
+    if not score['CiDEr'] > 0.7:
         continue
     
+    print(scan_name)
     print(anno_info['question'])
     print(anno_info['answers'])
+    print("pred", pred_info['pred'])
+    
     ## get scene pcd
     scene_pcd_info = _get_scan_data(anno_info['scene_id'])
     point_clouds = scene_pcd_info["point_clouds"][:, :3]  
@@ -99,58 +103,97 @@ for qformer_x_attns_p in tqdm(attn_p_list):
     ## [bs(1), scen_token(1024), 3]
     xyz = attn_infos['xyz']
     
-    for li, layer_x_attn_weight in enumerate(x_attn_weight):
-        ## remove batch
-        layer_x_attn_weight = layer_x_attn_weight[0]
-        ## sum in nhead
-        layer_x_attn_weight = layer_x_attn_weight.sum(0)
-        ## softmax
-        layer_x_attn_weight = torch.nn.functional.softmax(layer_x_attn_weight * 100, dim=-1)
-        ## argmax
-        argmax_idx = torch.argmax(layer_x_attn_weight, dim=-1)
-        assert len(argmax_idx) == x_attn_weight.shape[-2], f'{len(argmax_idx)} != {x_attn_weight.shape[-2]}'
+    ## new visualization version
+    # average the layer attention weight
+    avg_x_attn_weight = attn_infos['x_attn_weight'].mean(0)[0]
+    # average the head attention weight
+    avg_x_attn_weight = avg_x_attn_weight.mean(0)
+    # softmax
+    # avg_x_attn_weight = torch.nn.functional.softmax(avg_x_attn_weight * 100, dim=-1)
+    
+   
+    # 定义从蓝色到黄色的颜色映射
+    map_colors = ["blue", "yellow", "red"]  # 蓝色到黄色
+    from matplotlib.colors import LinearSegmentedColormap
+    cmap = LinearSegmentedColormap.from_list("mycmap", map_colors)
+    full_activations = np.zeros(point_clouds.shape[0])
+    min_activate = 1e9
+    for query_x_attn_weight in avg_x_attn_weight:
+        ## 选出topk的激活值
         
-        ## pop corresponding xyz
+        _, argmax_idx = query_x_attn_weight.topk(k=10)
         instrest_xyz = xyz[0, argmax_idx]
-        assert len(instrest_xyz) == x_attn_weight.shape[-2], f'{len(instrest_xyz)} != {x_attn_weight.shape[-2]}'
         
-        ## create instrest radius ball 
-        instrest_sphere_list = []
-        for ixyz in instrest_xyz:
-            sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.2)  # 设置球体的半径
-            sphere.translate(ixyz) 
-            sphere.paint_uniform_color([0, 0, 1])
-            instrest_sphere_list.append(sphere)
+        ## 由于没有xyz在原始点云中的ind，所以concat在原始点云后面
+        point_clouds = np.concatenate([point_clouds, instrest_xyz], axis=0)
+        colors = np.concatenate([colors, np.full((instrest_xyz.shape[0], 3), [0.5, 0.5, 0.5])], axis=0)
+        
+        # full_activations = np.full(point_clouds.shape[0], query_x_attn_weight.min()*1000)
+        full_activations = np.concatenate((full_activations, query_x_attn_weight[argmax_idx]*1000))
+        if query_x_attn_weight[argmax_idx].min() < min_activate:
+            min_activate = query_x_attn_weight[argmax_idx].min()
+        
+        tree = BallTree(point_clouds)
+        # 将每个激活点的激活值扩展到0.2米范围内的所有点
+        radius = 0.2  # 0.2米
+        for index, activation in zip(list(range(point_clouds.shape[0]-instrest_xyz.shape[0], point_clouds.shape[0])), query_x_attn_weight[argmax_idx]):
+            # 找到在0.2米范围内的点
+            ind = tree.query_radius(point_clouds[index:index+1], r=radius)[0]
+            full_activations[ind] = activation.item()*1000  # 设置相同的激活值
+        
+    full_activations[full_activations == 0] = min_activate
+    from sklearn.neighbors import NearestNeighbors
+    nn = NearestNeighbors(radius=0.3, algorithm='ball_tree').fit(point_clouds)
+    distances, indices = nn.radius_neighbors(point_clouds)
+    def gaussian_kernel(distance, sigma=0.05):
+        return np.exp(-0.5 * (distance ** 2) / sigma ** 2)
+    # 平滑激活值
+    smoothed_activations = np.zeros(full_activations.shape[0])
+    for i in range(full_activations.shape[0]):
+        weights = gaussian_kernel(distances[i])
+        weighted_activations = weights * full_activations[indices[i]]
+        smoothed_activations[i] = np.sum(weighted_activations) / np.sum(weights)
+        
+    # 归一化激活值并映射到颜色
+    normalized_activations = (smoothed_activations - np.min(smoothed_activations)) / (np.max(smoothed_activations) - np.min(smoothed_activations))
+    activation_colors = cmap(normalized_activations)
+    
+    mixed_colors = 0.5 * colors + 0.5 * activation_colors[:,:3]
+    
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(point_clouds)
+    pcd.colors = o3d.utility.Vector3dVector(mixed_colors)
+    o3d.visualization.draw_geometries([pcd, *axis_aligned_bounding_box_list])
+    
+    
+    ## old visualization version
+    # for li, layer_x_attn_weight in enumerate(x_attn_weight):
+    #     ## remove batch
+    #     layer_x_attn_weight = layer_x_attn_weight[0]
+    #     ## sum in nhead
+    #     layer_x_attn_weight = layer_x_attn_weight.sum(0)
+    #     ## softmax
+    #     layer_x_attn_weight = torch.nn.functional.softmax(layer_x_attn_weight * 100, dim=-1)
+    #     ## argmax
+    #     argmax_idx = torch.argmax(layer_x_attn_weight, dim=-1)
+    #     assert len(argmax_idx) == x_attn_weight.shape[-2], f'{len(argmax_idx)} != {x_attn_weight.shape[-2]}'
+        
+    #     ## pop corresponding xyz
+    #     instrest_xyz = xyz[0, argmax_idx]
+    #     assert len(instrest_xyz) == x_attn_weight.shape[-2], f'{len(instrest_xyz)} != {x_attn_weight.shape[-2]}'
+        
+    #     ## create instrest radius ball 
+    #     instrest_sphere_list = []
+    #     for ixyz in instrest_xyz:
+    #         sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.2)  # 设置球体的半径
+    #         sphere.translate(ixyz) 
+    #         sphere.paint_uniform_color([0, 0, 1])
+    #         instrest_sphere_list.append(sphere)
             
-        ## vis
-        vis_pcd = o3d.geometry.PointCloud()
-        vis_pcd.colors = o3d.utility.Vector3dVector(colors)
-        vis_pcd.points = o3d.utility.Vector3dVector(point_clouds)
-        o3d.visualization.draw_geometries([vis_pcd, *axis_aligned_bounding_box_list, *instrest_sphere_list])
+    #     ## vis
+    #     vis_pcd = o3d.geometry.PointCloud()
+    #     vis_pcd.colors = o3d.utility.Vector3dVector(colors)
+    #     vis_pcd.points = o3d.utility.Vector3dVector(point_clouds)
+    #     o3d.visualization.draw_geometries([vis_pcd, *axis_aligned_bounding_box_list, *instrest_sphere_list])
 
-        # img_width, img_height = (1920, 1080)
-
-        # mat = o3d.visualization.rendering.MaterialRecord()
-        # mat.shader = 'defaultUnlit'
-
-        # renderer_pc = o3d.visualization.rendering.OffscreenRenderer(img_width, img_height)
-        # renderer_pc.scene.set_background(np.array([0, 0, 0, 0]))
-        # renderer_pc.scene.add_geometry("pcd", vis_pcd, mat)
-
-        # # # Optionally set the camera field of view (to zoom in a bit)
-        # vertical_field_of_view = 90  # between 5 and 90 degrees
-        # aspect_ratio = img_width / img_height  # azimuth over elevation
-        # near_plane = 0.1
-        # far_plane = 50.0
-        # fov_type = o3d.visualization.rendering.Camera.FovType.Vertical
-        # renderer_pc.scene.camera.set_projection(vertical_field_of_view, aspect_ratio, near_plane, far_plane, fov_type)
-
-        # # Look at the origin from the front (along the -Z direction, into the screen), with Y as Up.
-        # center = [0, 0, 0]  # look_at target
-        # eye = [0, 0, 2]  # camera position
-        # up = [0, 1, 0]  # camera orientation
-        # renderer_pc.scene.camera.look_at(center, eye, up)
-
-        # # 捕获图像
-        # image = renderer_pc.render_to_image()
-        # o3d.io.write_image('rgb.png', image)
+    

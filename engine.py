@@ -287,12 +287,27 @@ def do_train(
             curr_iter = curr_epoch * len(dataloaders['train']) + batch_idx
             curr_lr = adjust_learning_rate(args, optimizer, curr_iter / max_iters)
             for key in batch_data_label:
-                batch_data_label[key] = batch_data_label[key].to(net_device)
+                if not isinstance(batch_data_label[key], list):
+                    batch_data_label[key] = batch_data_label[key].to(net_device)
     
             # Forward pass
             optimizer.zero_grad()
     
+            if args.ll3da_token_preprocess:
+                outputs = model(batch_data_label, is_eval=False, task_name='preprocess')
+                
+                scan_name = batch_data_label['scan_name'][0]
+                op_dir = '/mnt/nfs/share/Adaptive/ll3da_scene_token'
+                os.makedirs(f'{op_dir}/{scan_name}', exist_ok=True)
+                
+                torch.save(outputs['enc_features'], os.path.join(op_dir, scan_name ,'enc_features.pt'))
+                torch.save(outputs['enc_xyz'], os.path.join(op_dir, scan_name ,'enc_xyz.pt'))
+                
+                continue
+    
             outputs = model(batch_data_label, is_eval=False)
+            
+
             loss = outputs['loss']
             loss = all_reduce_average(loss)
             
@@ -455,8 +470,9 @@ def do_flex_opt_finetune(
             for key in batch_data_label:
                 if not isinstance(batch_data_label[key], list):
                     batch_data_label[key] = batch_data_label[key].to(net_device)
-                    if batch_data_label[key].dtype == torch.float32:
-                        batch_data_label[key] = batch_data_label[key].to(net_dtype)
+                    if not args.token_preprocess:
+                        if batch_data_label[key].dtype == torch.float32:
+                            batch_data_label[key] = batch_data_label[key].to(net_dtype)
                 else:
                     batch_data_label[key] = batch_data_label[key]
             

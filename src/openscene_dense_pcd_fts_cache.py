@@ -6,6 +6,22 @@ import torch
 import os
 
 
+class LL3DA_Fts_Cache():
+    def __init__(self, cache_dir='/mnt/nfs/share/Adaptive/ll3da_scene_token'):
+        self.cache_dir = cache_dir
+
+    def get_ll3da_scan_datas(self, scan_name):
+        cache_dir = f'/mnt/nfs/share/Adaptive/ll3da_scene_token/{scan_name}'
+        scene_tokens = torch.load(f'{cache_dir}/enc_features.pt', map_location='cpu').numpy().astype(np.float32),
+        scene_tokens = scene_tokens[0][0]
+        scene_xyz = torch.load(f'{cache_dir}/enc_xyz.pt', map_location='cpu').numpy().astype(np.float32)
+        scene_xyz = scene_xyz[0]
+        return {
+            'scene_tokens': scene_tokens.astype(np.float32),
+            'scene_xyz': scene_xyz.astype(np.float32),
+        }
+        
+
 class OpenScene_Fts_Cache():
     def __init__(self, cache_dir='/mnt/nfs/share/Adaptive/openscene_dense_fts_distill_axis_align_w_sm_obj'):
         self.cache_dir = cache_dir
@@ -31,6 +47,10 @@ class OpenScene_Fts_Cache():
             dense_fts = self._get_dense_fts(scan_name)
             reverse_inds = self._get_reverse_inds(scan_name)
             instance_labels = self._get_gt_dense_instance_labels(scan_name)
+            
+            ## 由于本来的点云concat了小物体但是 instance label是没有的
+            if len(dense_pcd) - len(instance_labels) > 0:
+                instance_labels = np.concatenate([instance_labels, np.zeros(len(dense_pcd) - len(instance_labels), dtype=instance_labels.dtype)])
             
             inds = np.random.choice(len(dense_fts), self.npoint, replace=True)
             
