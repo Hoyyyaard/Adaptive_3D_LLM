@@ -39,7 +39,7 @@ class OpenScene_Fts_Cache():
         return torch.load(os.path.join(self.cache_dir, scan_name + '_inds_reverse.pt'), map_location='cpu').numpy()
     
     def _get_gt_dense_instance_labels(self, scan_name):
-        return np.load(os.path.join('data/scannet/scannet_data_w_sm_obj_dense', scan_name + '_ins_label.npy'))
+        return np.load(os.path.join('data/scannet/scannet_data_dense', scan_name + '_ins_label.npy'))
     
     def get_openscene_scan_datas(self, scan_name, preprocess):
         if preprocess:
@@ -51,6 +51,8 @@ class OpenScene_Fts_Cache():
             ## 由于本来的点云concat了小物体但是 instance label是没有的
             # if len(dense_pcd) - len(instance_labels) > 0:
             #     instance_labels = np.concatenate([instance_labels, np.zeros(len(dense_pcd) - len(instance_labels), dtype=instance_labels.dtype)])
+            
+            assert dense_pcd.shape[0] == dense_fts.shape[0] == instance_labels.shape[0]
             
             inds = np.random.choice(len(dense_fts), self.npoint, replace=True)
             
@@ -91,6 +93,7 @@ class OpenScene_Fts_Cache():
             other_pcd_info = torch.load(f'{cache_dir}/other_pcd_info.pt', map_location='cpu')
             instance_labels = other_pcd_info['instance_labels'].numpy().astype(np.int64)
             point_clouds = other_pcd_info['point_clouds'].numpy().astype(np.float32) 
+            token_instance_label = other_pcd_info['token_instance_label'].numpy().astype(np.int64)
             
             # dense_region_tokens = [torch.load(f'{cache_dir}/region_features_{i}.pt', map_location='cpu') for i in range(scene_tokens.shape[0])]
             # dense_region_tokens = torch.cat(dense_region_tokens, dim=0).numpy().astype(np.float32)
@@ -101,6 +104,7 @@ class OpenScene_Fts_Cache():
                 'scene_xyz': scene_xyz,
                 'openscene_instance_labels' : instance_labels[0],
                 'openscene_point_clouds': point_clouds[0],
+                'token_instance_label' : token_instance_label[0],
                 # 'dense_region_tokens': dense_region_tokens,
                 # 'dense_region_xyz': dense_region_xyz
             }

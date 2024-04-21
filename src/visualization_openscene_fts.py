@@ -15,7 +15,7 @@ def get_clip_text_fts(text):
     return text_features
 
 def _get_scan_data(scan_name,):
-    data_path = 'data/scannet/scannet_data_w_sm_obj_dense'
+    data_path = 'data/scannet/scannet_data_dense'
     mesh_vertices = np.load(os.path.join(data_path, scan_name) + "_aligned_vert.npy")
     instance_labels = np.load(
         os.path.join(data_path, scan_name) + "_ins_label.npy"
@@ -44,9 +44,9 @@ def _get_scan_data(scan_name,):
     
     return ret_dict
 
-scan_name = 'scene0137_00'
-scene_token_p = f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_w_sm_obj_0.2_r_0.25_10_0.05_500/{scan_name}/enc_features.pt'
-scene_token_xyz_p = f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_w_sm_obj_0.2_r_0.25_10_0.05_500/{scan_name}/enc_xyz.pt'
+scan_name = 'scene0164_00'
+scene_token_p = f'/mnt/nfs/share/Adaptive/0420_openscene_scene_tokens_axis_align_w_pcd_info_s_512_0.2_128/{scan_name}/enc_features.pt'
+scene_token_xyz_p = f'/mnt/nfs/share/Adaptive/0420_openscene_scene_tokens_axis_align_w_pcd_info_s_512_0.2_128/{scan_name}/enc_xyz.pt'
 
 # Load scene axis alignment matrix
 meta_file = f'/mnt/nfs/share/datasets/scannet/scans/{scan_name}/{scan_name}.txt'
@@ -80,10 +80,10 @@ scene_token_xyz = torch.load(scene_token_xyz_p, map_location='cpu')[0]
 # scene_token_xyz = np.dot(pts, axis_align_matrix.transpose())[:, 0:3] # Nx4
 
 ## drop xyz
-scene_token = scene_token[..., 3:]
+# scene_token = scene_token[..., 3:]
 
-prompt = 'telephone'
-top_k = 5
+prompt = 'bottle'
+top_k = 10
 print(prompt)
 print(scan_name)
 
@@ -97,15 +97,15 @@ similarity = (norm_text_fts.float() @ scene_token.T.float()).squeeze()
 top_k_indices = torch.topk(similarity, top_k).indices
 
 ## get region of instrest
-region_inds = [torch.load(f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_w_sm_obj_0.2_r_0.25_10_0.05_500/{scan_name}/region_inds_{i}.pt', map_location='cpu')[0] for i in top_k_indices]
-region_xyzs = [torch.load(f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_w_sm_obj_0.2_r_0.25_10_0.05_500/{scan_name}/region_xyz_{i}.pt', map_location='cpu')[0] for i in top_k_indices]
+# region_inds = [torch.load(f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_w_sm_obj_0.2_r_0.25_10_0.05_500/{scan_name}/region_inds_{i}.pt', map_location='cpu')[0] for i in top_k_indices]
+# region_xyzs = [torch.load(f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_w_sm_obj_0.2_r_0.25_10_0.05_500/{scan_name}/region_xyz_{i}.pt', map_location='cpu')[0] for i in top_k_indices]
 
 instrest_xyz = scene_token_xyz[top_k_indices.cpu()]
-instrest_region_xyz = []
-for inds, xyzs in zip(region_inds, region_xyzs):
-    for ind, xyz in zip(inds, xyzs):
-        instrest_region_xyz.append(xyz)
-instrest_region_xyz = torch.stack(instrest_region_xyz, dim=0)
+# instrest_region_xyz = []
+# for inds, xyzs in zip(region_inds, region_xyzs):
+#     for ind, xyz in zip(inds, xyzs):
+#         instrest_region_xyz.append(xyz)
+# instrest_region_xyz = torch.stack(instrest_region_xyz, dim=0)
 # pts = np.ones((instrest_region_xyz.shape[0], 4))
 # pts[:,0:3] = instrest_region_xyz[:,0:3]
 # instrest_region_xyz = np.dot(pts, axis_align_matrix.transpose())[:, 0:3] # Nx4
@@ -120,19 +120,19 @@ for ixyz in instrest_xyz:
     sphere.paint_uniform_color([0, 0, 1])
     instrest_sphere_list.append(sphere)
     
-instrest_region_sphere_list = []
-for ixyz in instrest_region_xyz:
-    sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.05)  # 设置球体的半径
-    sphere.translate(ixyz) 
-    # print(ixyz)
-    sphere.paint_uniform_color([0, 1, 0])
-    instrest_region_sphere_list.append(sphere)
+# instrest_region_sphere_list = []
+# for ixyz in instrest_region_xyz:
+#     sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.05)  # 设置球体的半径
+#     sphere.translate(ixyz) 
+#     # print(ixyz)
+#     sphere.paint_uniform_color([0, 1, 0])
+#     instrest_region_sphere_list.append(sphere)
     
 ## vis
 vis_pcd = o3d.geometry.PointCloud()
 vis_pcd.colors = o3d.utility.Vector3dVector(colors)
 vis_pcd.points = o3d.utility.Vector3dVector(point_clouds)
-o3d.visualization.draw_geometries([vis_pcd, *instrest_region_sphere_list])
+o3d.visualization.draw_geometries([vis_pcd, *instrest_sphere_list])
 
 
 

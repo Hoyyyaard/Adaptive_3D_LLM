@@ -1737,6 +1737,16 @@ class FlexOPTDecoder(OPTDecoder):
         # Initialize weights and apply final processing
         self.post_init()
         
+    def compute_mask_for_scene_tokens(self, xyz, radius=1.44, dist=None):
+        with torch.no_grad():
+            xyz = xyz.to(torch.float32)
+            if dist is None or dist.shape[1] != xyz.shape[1]:
+                dist = torch.cdist(xyz, xyz, p=2)
+            # entries that are True in the mask do not contribute to self-attention
+            # so points outside the radius are not considered
+            mask = dist >= radius
+        return mask.to(next(self.parameters()).dtype), dist.to(next(self.parameters()).dtype)
+        
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -1851,8 +1861,52 @@ class FlexOPTDecoder(OPTDecoder):
                 attention_mask, input_shape, inputs_embeds, past_key_values_length
             )
         
-        ## scene token 不应该是causal的
-        causal_attention_mask[:,:,:520,:520] = 0.
+        ## causal_attention_mask : [bs, 1, seq len, seq len]  
+        ## mask_for_visual_token : [bs , 512 ,512] True in the mask do not contribute to self-attention
+        ## scene token只能跟一点范围内的token交互
+        ## mask=1 是mask
+        mask_for_visual_token, dist = self.compute_mask_for_scene_tokens(dense_pcd_info['scene_xyz'])
+        mask_for_visual_token = mask_for_visual_token.int()
+        # mask_for_visual_token = mask_for_visual_token  # * torch.finfo(causal_attention_mask.dtype).min
+        
+        ## 这里计算instance mask有些任务只需要激活特定的token，所以需要mask掉其他token 
+        ## 这里相当于ll3da的visual prompt 
+        ## 这里的方法是只激活对应的instance的token
+        ## 这里的mask是用来控制对应的token是否激活 最后输出为0是激活
+        scene_token_num = 512
+        click_query_num = 8
+        non_text_num = scene_token_num + click_query_num
+        non_scene_token_num = causal_attention_mask.shape[-1] - scene_token_num
+        ## [bs, scene_token_num]
+        ## 这里的mask是1是激活 所以需要取反
+        token_instance_mask = 1 - dense_pcd_info['token_instance_mask'].int()
+        
+        ## 1. 计算q的scene token部分与k的scene token部分的attention
+        ### 禁止q token跟 k token 交互
+        col_token_instance_mask = token_instance_mask.unsqueeze(1)
+        col_token_instance_mask = col_token_instance_mask.expand(-1, token_instance_mask.shape[-1], -1)
+        ### 禁止k token跟 q token 交互
+        row_token_instance_mask = token_instance_mask.unsqueeze(-1)
+        row_token_instance_mask = row_token_instance_mask.expand(batch_size, -1, token_instance_mask.shape[-1])
+        scene_scene_token_instance_attn_mask = col_token_instance_mask | row_token_instance_mask
+        
+        ## 2.计算 q的text token部分与k的scene token部分的attention
+        ### 禁止q token跟 k token 交互
+        col_token_instance_mask = token_instance_mask.unsqueeze(1)
+        text_scene_token_instance_attn_mask = col_token_instance_mask.expand(-1, non_scene_token_num, -1)
+        ## [bs, whole seq len ,512]
+        token_instance_attn_mask = torch.cat([scene_scene_token_instance_attn_mask, text_scene_token_instance_attn_mask], dim=-2)
+        
+        token_instance_attn_mask[:, :512, : ] = token_instance_attn_mask[:, :512, : ] | mask_for_visual_token
+        final_attn_mask = token_instance_attn_mask.half()
+        final_attn_mask = final_attn_mask * torch.finfo(causal_attention_mask.dtype).min
+        final_attn_mask = final_attn_mask.unsqueeze(1)
+        
+        ## causal_attention_mask是0为激活 torch.finfo(causal_attention_mask.dtype).min为不激活
+        ## scene token和visual prompt不应该是causal的
+        causal_attention_mask[:,:,:non_text_num,:non_text_num] = 0.
+
+        causal_attention_mask[..., :, :scene_token_num] = final_attn_mask
 
         pos_embeds = self.embed_positions(attention_mask, past_key_values_length)
 
@@ -2065,24 +2119,25 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         # the lm_head weight is automatically tied to the embed tokens weight
         self.lm_head = nn.Linear(config.word_embed_proj_dim, config.vocab_size, bias=False)
         self.use_ll3da_scene_token = config.use_ll3da_scene_token
-        in_channel = 768 if not config.use_ll3da_scene_token else 256
+        in_channel = 768+128 if not config.use_ll3da_scene_token else 256
         # self.scene_token_in_head = nn.Linear(in_channel, in_channel, bias=False)
-        if not config.use_ll3da_scene_token:
-            self.encoder = self._build_mask_transformer_encoder(config)
+        # if not config.use_ll3da_scene_token:
+        #     self.encoder = self._build_mask_transformer_encoder(config)
 
         self.encoder_to_llm_projection = nn.Sequential(
-            nn.Linear(in_channel, 2048),
+            nn.Linear(in_channel, 1024),
             nn.ReLU(),
-            nn.Linear(2048, 2048),
-            nn.ReLU(),
+            nn.Linear(1024, 2048),
+            nn.ReLU()
         )
+        self.xyz_head = nn.Linear(3, 128, bias=False)
         
         self.post_init()
     
     def _build_mask_transformer_encoder(self, config):
         import math
         encoder_layer = TransformerEncoderLayer(
-            d_model=768,
+            d_model=768+128,
             nhead=4,
             dim_feedforward=128,
             dropout=0.1,
@@ -2106,12 +2161,12 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         
         # pre_enc_features = self.scene_token_in_head(scene_tokens)
         ## expects npoints x batch x channel features
-        pre_enc_features = scene_tokens.permute(1, 0, 2)
-        enc_xyz, enc_features, enc_inds = self.encoder(
-            pre_enc_features, xyz=xyz
-        )
-        enc_features = enc_features.permute(1, 0, 2)
-        enc_features = self.encoder_to_llm_projection(enc_features)
+        # pre_enc_features = scene_tokens.permute(1, 0, 2)
+        # enc_xyz, enc_features, enc_inds = self.encoder(
+        #     pre_enc_features, xyz=xyz
+        # )
+        # enc_features = enc_features.permute(1, 0, 2)
+        enc_features = self.encoder_to_llm_projection(scene_tokens)
         return enc_features
     
     @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
@@ -2226,8 +2281,9 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         ## get sparse scene object tokens from openscene_sparse_fts by set abstract layer here
         if batch_data_label is None:
             batch_data_label = copy.deepcopy(self.batch_data_label)
-        xyz = batch_data_label['scene_xyz'] if 'scene_xyz' in batch_data_label else torch.zeros(1).to(inputs_embeds.device)
-        pre_enc_features = self._run_mask_tranformer_encoder(batch_data_label['scene_tokens'], xyz)
+        xyz = batch_data_label['scene_xyz']
+        scene_tokens = torch.cat([batch_data_label['scene_tokens'], self.xyz_head(batch_data_label['scene_xyz'])], dim=-1)
+        pre_enc_features = self._run_mask_tranformer_encoder(scene_tokens, xyz)
         
         # batch_data_label['dense_region_tokens'] = self.scene_token_in_head(batch_data_label['dense_region_tokens'])
         
@@ -2239,6 +2295,9 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         # xyz = batch_data_label['openscene_sparse_pcd']
         # pre_enc_xyz, pre_enc_features, pre_enc_inds = self.pcd_tokenizer(xyz, features)
         # pre_enc_features = pre_enc_features.transpose(1, 2).contiguous()
+        
+
+        
         pre_enc_features_mask = torch.ones_like(pre_enc_features[..., 0])
         
         if past_key_values is None :
@@ -2268,6 +2327,8 @@ class FlexOPTForCausalLM(OPTForCausalLM):
             return_dict=return_dict,
             dense_pcd_info={
                 'dense_region_tokens':batch_data_label['dense_region_tokens'] if 'dense_region_tokens' in batch_data_label else torch.zeros(1).to(inputs_embeds.device),
+                'scene_xyz' : batch_data_label['scene_xyz'],
+                'token_instance_mask' : batch_data_label['token_instance_mask']
             }
         )
 
@@ -2287,7 +2348,7 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         #     'scan_name': batch_data_label['scan_name']
         # }
         # scan_idx = batch_data_label['scan_idx'].item()
-        # op_path = f'results/attn_vis_flex/encoder-openscene-maskformer-axis-align-w-sm-obj-wocausal-finetune-opt-1-3b/4epoch/{task_name}/{scan_idx}'
+        # op_path = f'results/attn_vis_flex/encoder-openscene-maskformer-axis-align-concat-xyz-wocausal-womaskformer-llmwdistmask-instanceactivatemask-finetune-opt-1-3b/2epoch/{task_name}/{scan_idx}'
         # if not os.path.exists(op_path):
         #     os.makedirs(op_path)
         # scan_idx = batch_data_label['scan_idx']
@@ -2345,7 +2406,8 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         
         import os
-        p = '/mnt/nfs/share/Adaptive/0420_openscene_scene_tokens_axis_align_w_pcd_info_s_512_0.2_128'
+        p = '/mnt/nfs/share/Adaptive/0421_openscene_scene_tokens_axis_align_w_pcd_info_w_token_instance_label_s_512_0.2_128'
+        os.makedirs(p, exist_ok=True)
         self.scan_name_list = os.listdir(p)
         scan_name = batch_data_label['scan_name'][0]
         ot_dir = f'{p}/{scan_name}'
@@ -2389,15 +2451,15 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         xyz = batch_data_label['openscene_sparse_pcd']
         
         
-        other_pcd_info = {
-            'instance_labels' : instance_labels ,
-            'point_clouds': xyz, 
-        }
-        
         pre_enc_xyz, pre_enc_features, pre_enc_inds = scene_tokenizer(xyz, features)
         pre_enc_features = pre_enc_features.transpose(1, 2).contiguous()
         
-        # token_instance_label = instance_labels[:, pre_enc_inds[0].long()]
+        token_instance_label = instance_labels[:, pre_enc_inds[0].long()]
+        other_pcd_info = {
+            'instance_labels' : instance_labels ,
+            'point_clouds': xyz, 
+            'token_instance_label': token_instance_label
+        }
         
         torch.save(pre_enc_inds, f'{ot_dir}/enc_inds.pt')
         torch.save(pre_enc_xyz, f'{ot_dir}/enc_xyz.pt')
@@ -2672,13 +2734,14 @@ class Shell_Model(nn.Module):
             output_ids_list = output_ids_list * caption_config['eos_token_id']
             for batch_id in range(input_ids.shape[0]):
                 data_label = {
-                    'dense_region_tokens': batch_data_label['dense_region_tokens'][batch_id].unsqueeze(0),
+                    # 'dense_region_tokens': batch_data_label['dense_region_tokens'][batch_id].unsqueeze(0),
                     'click_mask': batch_data_label['click_mask'][batch_id].unsqueeze(0),
                     'click_query': batch_data_label['click_query'][batch_id].unsqueeze(0),
                     'scene_tokens': batch_data_label['scene_tokens'][batch_id].unsqueeze(0),
                     'scene_xyz': batch_data_label['scene_xyz'][batch_id].unsqueeze(0),
-                    'dense_region_tokens': batch_data_label['dense_region_tokens'][batch_id].unsqueeze(0),
-                    'dense_region_xyz': batch_data_label['dense_region_xyz'][batch_id].unsqueeze(0),
+                    'token_instance_mask' : batch_data_label['token_instance_mask'][batch_id].unsqueeze(0),
+                    # 'dense_region_tokens': batch_data_label['dense_region_tokens'][batch_id].unsqueeze(0),
+                    # 'dense_region_xyz': batch_data_label['dense_region_xyz'][batch_id].unsqueeze(0),
                     'point_cloud_dims_min': batch_data_label['point_cloud_dims_min'][batch_id].unsqueeze(0),
                     'point_cloud_dims_max': batch_data_label['point_cloud_dims_max'][batch_id].unsqueeze(0),
                     'task_name': 'qa',

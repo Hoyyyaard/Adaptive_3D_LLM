@@ -502,7 +502,8 @@ def do_flex_opt_finetune(
                 torch.nn.utils.clip_grad_norm_(model_no_ddp.model.parameters(), args.clip_gradient)
             
             # for n, p in model_no_ddp.model.named_parameters():
-            #     assert not torch.isnan(p).any()
+            #     if not p.grad is None:
+            #         print(n)
                 
             optimizer.step()
             

@@ -288,7 +288,7 @@ def evaluate(model, val_data_loader, labelset_name='scannet_3d'):
                 if feature_type == 'distill':
                     predictions = model(sinput)
                     
-                    # predictions = predictions[inds_reverse, :]
+                    predictions = predictions[inds_reverse, :]
                     # opcd = np.load(os.path.join('/home/admin/Projects/LL3DA/data/scannet/scannet_data_w_sm_obj_dense', scan_name[0] + '_ins_label.npy'))
                     # assert opcd.shape[0] == predictions.shape[0]
                     # continue

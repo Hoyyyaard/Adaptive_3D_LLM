@@ -8,7 +8,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 
-attn_dir = 'results/attn_vis_flex/encoder-openscene-maskformer-axis-align-w-sm-obj-wocausal-finetune-opt-1-3b/4epoch/qa'
+attn_dir = 'results/attn_vis_flex/encoder-openscene-maskformer-axis-align-concat-xyz-wocausal-womaskformer-llmwdistmask-instanceactivatemask-finetune-opt-1-3b/2epoch/qa'
 # exp_dir = 'results/toy_exp/nipus_exp/unified_scanqa/finetune_model/encoder-openscene-maskformer-axis-align-w-sm-obj-wocausal/4layer/finetune_flex_self_attn/1epoch/qa_corpus_val.json'
 
 ## FIXME
@@ -116,7 +116,7 @@ for episode in tqdm(attn_p_list):
     attn_weight = attn_weight[:, :, 512:, :]
     ## mean in nhead
     ## [layers(16), text_token(?), scen_token(512)]
-    avg_attn_weight = attn_weight.mean(1)
+    avg_attn_weight = attn_weight.mean(0)
     ## mean in layer
     ## [text_token(?), scen_token(512)]
     avg_x_attn_weight = avg_attn_weight.mean(0)
@@ -168,7 +168,7 @@ for episode in tqdm(attn_p_list):
     normalized_activations = (smoothed_activations - np.min(smoothed_activations)) / (np.max(smoothed_activations) - np.min(smoothed_activations))
     activation_colors = cmap(normalized_activations)
     
-    mixed_colors = 0.5 * colors + 0.5 * activation_colors[:,:3]
+    mixed_colors = 0.6 * colors + 0.4 * activation_colors[:,:3]
     
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(point_clouds)

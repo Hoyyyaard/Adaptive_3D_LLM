@@ -118,17 +118,7 @@ def evaluate(
             else:
                 batch_data_label[key] = batch_data_label[key]
         
-        model_input = {
-            'point_clouds': batch_data_label['point_clouds'],
-            'point_cloud_dims_min': batch_data_label['point_cloud_dims_min'],
-            'point_cloud_dims_max': batch_data_label['point_cloud_dims_max'],
-            'qformer_input_ids': batch_data_label['qformer_input_ids'],
-            'qformer_attention_mask': batch_data_label['qformer_attention_mask'],
-            'instruction': batch_data_label['instruction'],
-            'instruction_mask': batch_data_label['instruction_mask'],
-            'scan_idx' : batch_data_label['scan_idx'],
-            'scan_name' : batch_data_label['scan_name']
-        }
+
         if os.getenv("adaptive_pcd_input", False) == "True":
             model_input['sample_prob'] = batch_data_label['sample_prob']
             
@@ -139,6 +129,17 @@ def evaluate(
         if args.finetune_flex_opt:
             outputs = model(batch_data_label, is_eval=True, task_name='qa')
         else:
+            model_input = {
+            'point_clouds': batch_data_label['point_clouds'],
+            'point_cloud_dims_min': batch_data_label['point_cloud_dims_min'],
+            'point_cloud_dims_max': batch_data_label['point_cloud_dims_max'],
+            'qformer_input_ids': batch_data_label['qformer_input_ids'],
+            'qformer_attention_mask': batch_data_label['qformer_attention_mask'],
+            'instruction': batch_data_label['instruction'],
+            'instruction_mask': batch_data_label['instruction_mask'],
+            'scan_idx' : batch_data_label['scan_idx'],
+            'scan_name' : batch_data_label['scan_name']
+        }
             outputs = model(model_input, is_eval=True, task_name='qa')
         
         outputs = dict(

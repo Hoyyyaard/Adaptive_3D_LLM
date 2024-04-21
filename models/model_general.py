@@ -27,7 +27,8 @@ class CaptionNet(nn.Module):
         self.captioner = None
         
         if args.abl_ll3da_w_openscene_token:
-            self.openscene2ll3da_head = nn.Linear(771, 256)
+            self.openscene2ll3da_head = nn.Linear(768, 256)
+            self.xyz_head = nn.Linear(3, 128)
         
         if args.detector is not None:
             detector_module = importlib.import_module(
@@ -54,8 +55,10 @@ class CaptionNet(nn.Module):
             else:
                 outputs = self.detector(batch_data_label, is_eval=is_eval)
         else:
-            outputs['enc_features'] = self.openscene2ll3da_head(batch_data_label['enc_features'])
-            outputs['enc_xyz'] = batch_data_label['enc_xyz']
+            outputs['enc_features'] = self.openscene2ll3da_head(batch_data_label['scene_tokens'])
+            xyz = self.xyz_head(batch_data_label['scene_xyz'])
+            outputs['enc_features'] = torch.cat(outputs['enc_features'], xyz, dim=-1)
+            outputs['enc_xyz'] = batch_data_label['scene_xyz']
             outputs['sem_cls_logits'] = torch.zeros((batch_data_label['enc_xyz'].shape[0], 256, 128)).to(batch_data_label['enc_xyz'].device)
             batch_data_label['box_query'] = None
             
