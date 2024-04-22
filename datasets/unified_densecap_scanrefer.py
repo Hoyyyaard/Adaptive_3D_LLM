@@ -311,29 +311,29 @@ class Dataset(ScanNetBaseDataset):
                 click_query = np.zeros((1, 3))
                 click_mask = np.zeros((1,))
                 if self.split == 'train':
-                    if random.random() > 0.5:
-                        has_instance = np.unique(openscene_ret_dict['token_instance_label'])
-                        if int(self.annotations[idx]['object_id']) + 1 in has_instance:
-                            token_instance_mask[openscene_ret_dict['token_instance_label'] == int(self.annotations[idx]['object_id']) + 1] = 0
-                        if (token_instance_mask == 0).sum() > 0:
-                            ## reverse mask
-                            token_instance_mask = 1 - token_instance_mask
-                            ## aug
-                            total_activate_token_num = 50
-                            activate_token_num = (token_instance_mask == 1).sum()
-                            if total_activate_token_num > activate_token_num:
-                                zero_index = np.where(token_instance_mask == 0)[0]
-                                select_zero_index = np.random.choice(zero_index, total_activate_token_num-activate_token_num, replace=False)
-                                token_instance_mask[select_zero_index] = 1
-                    else:
-                        target_obj_id = int(self.annotations[idx]['object_id'])
-                        try:
-                            object_points = pcd[instance_labels == (target_obj_id + 1)]    # npt x 3
-                            click_query[0] = random.choice(object_points)
-                            click_mask[0] = 1
-                        except Exception as e: 
-                            click_query[0] = ret_dict["gt_box_centers"][match_mask == 1].reshape(3,).astype(np.float32)
-                            click_mask[0] = 1
+                    # if random.random() > 0.5:
+                    has_instance = np.unique(openscene_ret_dict['token_instance_label'])
+                    if int(self.annotations[idx]['object_id']) + 1 in has_instance:
+                        token_instance_mask[openscene_ret_dict['token_instance_label'] == int(self.annotations[idx]['object_id']) + 1] = 0
+                    if (token_instance_mask == 0).sum() > 0:
+                        ## reverse mask
+                        token_instance_mask = 1 - token_instance_mask
+                        ## aug
+                        # total_activate_token_num = 50
+                        # activate_token_num = (token_instance_mask == 1).sum()
+                        # if total_activate_token_num > activate_token_num:
+                        #     zero_index = np.where(token_instance_mask == 0)[0]
+                        #     select_zero_index = np.random.choice(zero_index, total_activate_token_num-activate_token_num, replace=False)
+                        #     token_instance_mask[select_zero_index] = 1
+                    # else:
+                    target_obj_id = int(self.annotations[idx]['object_id'])
+                    try:
+                        object_points = pcd[instance_labels == (target_obj_id + 1)]    # npt x 3
+                        click_query[0] = random.choice(object_points)
+                        click_mask[0] = 1
+                    except Exception as e: 
+                        click_query[0] = ret_dict["gt_box_centers"][match_mask == 1].reshape(3,).astype(np.float32)
+                        click_mask[0] = 1
                 openscene_ret_dict['click_query'] = click_query.astype(np.float32)
                 openscene_ret_dict['click_mask'] = click_mask.astype(np.float32)
                 

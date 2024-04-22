@@ -444,7 +444,7 @@
                 "--use_normal",
                 "--detector", "detector_Vote2Cap_DETR",
                 "--captioner", "ll3da",
-                "--test_ckpt", "ckpts/opt-1.3b/ll3da-scannet/checkpoint_best.pth",
+                "--test_ckpt", "ckpts/opt-1.3b/ll3da-scannet/checkpoint_10k.pth",
                 "--dataset", "unified_scanqa",
                 "--vocab", "facebook/opt-1.3b",
                 "--qformer_vocab", "bert-base-embedding",
@@ -481,7 +481,7 @@
                 "--use_normal",
                 "--detector", "detector_Vote2Cap_DETR",
                 "--captioner", "ll3da",
-                "--test_ckpt", "ckpts/opt-1.3b/nipus_exp/encoder-openscene-maskformer-axis-align-concat-xyz-wocausal-womaskformer-llmwdistmask-instanceactivatemask-finetune-opt-1-3b/checkpoint.pth",
+                "--test_ckpt", "ckpts/opt-1.3b/nipus_exp/encoder-openscene-maskformer-axis-align-wocausal-womaskformer-llmwdistmask-tokenwclickxyz-activatetoken-finetune-opt-1-3b/checkpoint_8k.pth",
                 "--dataset", "unified_scanqa",
                 "--vocab", "facebook/opt-1.3b",
                 "--qformer_vocab", "bert-base-embedding",
@@ -526,7 +526,7 @@
                 "--vocab", "facebook/opt-1.3b",
                 "--qformer_vocab", "bert-base-embedding",
                 "--dist_url", "tcp://localhost:12345",
-                "--batchsize_per_gpu", "1",
+                "--batchsize_per_gpu", "2",
                 "--ngpus", "1",
                 "--use_beam_search",
                 "--cache_dir","results/debug",
@@ -562,7 +562,7 @@
                 "MKL_NUM_THREADS":"1",
                 "NUMEXPR_NUM_THREADS":"1",
                 "OMP_NUM_THREADS":"1",
-                "DISPLAY":"localhost:14.0"
+                "DISPLAY":"localhost:12.0"
             }
         },
         {

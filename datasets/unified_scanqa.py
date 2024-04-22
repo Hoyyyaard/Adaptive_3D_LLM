@@ -296,12 +296,12 @@ class Dataset(ScanNetBaseDataset):
                         ## reverse mask
                         token_instance_mask = 1 - token_instance_mask
                         ## aug
-                        total_activate_token_num = 50
-                        activate_token_num = (token_instance_mask == 1).sum()
-                        if total_activate_token_num > activate_token_num:
-                            zero_index = np.where(token_instance_mask == 0)[0]
-                            select_zero_index = np.random.choice(zero_index, total_activate_token_num-activate_token_num, replace=False)
-                            token_instance_mask[select_zero_index] = 1
+                        # total_activate_token_num = 50
+                        # activate_token_num = (token_instance_mask == 1).sum()
+                        # if total_activate_token_num > activate_token_num:
+                        #     zero_index = np.where(token_instance_mask == 0)[0]
+                        #     select_zero_index = np.random.choice(zero_index, total_activate_token_num-activate_token_num, replace=False)
+                        #     token_instance_mask[select_zero_index] = 1
                 
                     try:
                         object_points = pcd[instance_labels == (target_obj_id + 1)]    # npt x 3

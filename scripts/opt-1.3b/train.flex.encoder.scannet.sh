@@ -17,13 +17,13 @@ python main.py \
     --vocab ckpts/opt-model \
     --qformer_vocab bert-base-embedding \
     --pretrained_weights ckpts/opt-model/pytorch_model.bin \
-    --checkpoint_dir ckpts/opt-1.3b/nipus_exp/encoder-openscene-maskformer-axis-align-concat-xyz-wocausal-womaskformer-llmwdistmask-instanceactivatemask-aug-finetune-opt-1-3b\
+    --checkpoint_dir ckpts/opt-1.3b/nipus_exp/encoder-openscene-maskformer-axis-align-wocausal-womaskformer-llmwdistmask-tokenwclickxyz-activatetoken-finetune-opt-1-3b\
     --max_epoch 8 \
     --dataset_num_workers 4 \
     --finetune_flex_opt \
     --dist_url tcp://localhost:12445 \
     --save_every 4000 \
-    --batchsize_per_gpu 4 --ngpus 8 --base_lr 1e-4 --final_lr 1e-6 \
+    --batchsize_per_gpu 4 --ngpus 7 --base_lr 1e-4 --final_lr 1e-6 \
     --cache_dir results/debug \
     --finetune_opt1_3b \
     --num_finetune_hidden_layers 0 \

@@ -8,7 +8,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from sklearn.neighbors import BallTree
 
-attn_dir = 'results/attn_vis_qformer/qa'
+attn_dir = 'results/attn_vis_qformer/ll3da/10k/qa'
 exp_dir = 'results/toy_exp/scanqa/official/qa_pred_gt_val.json'
 
 
@@ -21,7 +21,7 @@ for k,v in qa_pred_gt.items():
 
 
 def _get_scan_data(scan_name,):
-    data_path = 'data/scannet/scannet_data_w_sm_obj_dense'
+    data_path = 'data/scannet/scannet_data_dense'
     mesh_vertices = np.load(os.path.join(data_path, scan_name) + "_aligned_vert.npy")
     instance_labels = np.load(
         os.path.join(data_path, scan_name) + "_ins_label.npy"
@@ -55,7 +55,7 @@ def _get_scan_data(scan_name,):
 anno = list(json.load(open('data/ScanQA/ScanQA_v1.0_val.json','r')))
 
 attn_p_list = os.listdir(attn_dir)
-random.shuffle(attn_p_list)
+# random.shuffle(attn_p_list)
 
 for qformer_x_attns_p in tqdm(attn_p_list):
     attn_infos = torch.load(os.path.join(attn_dir, qformer_x_attns_p), map_location='cpu')

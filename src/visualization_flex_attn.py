@@ -8,7 +8,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 
-attn_dir = 'results/attn_vis_flex/encoder-openscene-maskformer-axis-align-concat-xyz-wocausal-womaskformer-llmwdistmask-instanceactivatemask-finetune-opt-1-3b/2epoch/qa'
+attn_dir = 'results/attn_vis_flex/encoder-openscene-maskformer-axis-align-wocausal-womaskformer-llmwdistmask-tokenwclickxyz-activatetoken-finetune-opt-1-3b/8k/qa'
 # exp_dir = 'results/toy_exp/nipus_exp/unified_scanqa/finetune_model/encoder-openscene-maskformer-axis-align-w-sm-obj-wocausal/4layer/finetune_flex_self_attn/1epoch/qa_corpus_val.json'
 
 ## FIXME
@@ -21,7 +21,7 @@ attn_dir = 'results/attn_vis_flex/encoder-openscene-maskformer-axis-align-concat
 
 
 def _get_scan_data(scan_name,):
-    data_path = 'data/scannet/scannet_data_w_sm_obj_dense'
+    data_path = 'data/scannet/scannet_data_dense'
     mesh_vertices = np.load(os.path.join(data_path, scan_name) + "_aligned_vert.npy")
     instance_labels = np.load(
         os.path.join(data_path, scan_name) + "_ins_label.npy"
@@ -65,7 +65,7 @@ anno = list(json.load(open('data/ScanQA/ScanQA_v1.0_val.json','r')))
 
 attn_p_list = os.listdir(attn_dir)
 # random.shuffle(attn_p_list)
-
+# attn_p_list.sort(key=lambda x: int(x))
 
 for episode in tqdm(attn_p_list):
     
@@ -98,7 +98,9 @@ for episode in tqdm(attn_p_list):
         axis_aligned_bounding_box_list.append(aabb)
     
     instrest_sphere_list = []
-    last_tokens = os.listdir(epi_p:=os.path.join(attn_dir, episode))[-2]
+    
+    new_token_num = len(os.listdir(epi_p:=os.path.join(attn_dir, episode)))
+    last_tokens = os.listdir(epi_p:=os.path.join(attn_dir, episode))[new_token_num-1]
     # print(pred_seq[token_idx])
     attn_infos = torch.load(os.path.join(epi_p, last_tokens), map_location='cpu')
     
@@ -109,17 +111,18 @@ for episode in tqdm(attn_p_list):
     attn_weight = attn_infos['attn_weight']
     xyz = attn_infos['xyz']
     ## only perserve last k layers
-    attn_weight = attn_weight[-16:, ...]
+    # attn_weight = attn_weight[-16:, ...]
     ## only perserve scene token
     attn_weight = attn_weight[..., :512]
     ## only perserve text token as query
-    attn_weight = attn_weight[:, :, 512:, :]
+    attn_weight = attn_weight[:, :, 512:-new_token_num, :]
     ## mean in nhead
     ## [layers(16), text_token(?), scen_token(512)]
-    avg_attn_weight = attn_weight.mean(0)
+    avg_attn_weight = attn_weight.mean(1)
+    # for layer_avg_attn_weight in avg_attn_weight:
     ## mean in layer
-    ## [text_token(?), scen_token(512)]
-    avg_x_attn_weight = avg_attn_weight.mean(0)
+    # [text_token(?), scen_token(512)]
+    avg_x_attn_weight = avg_attn_weight.mean(1)
     
     # 定义从蓝色到黄色的颜色映射
     map_colors = ["blue", "yellow", "red"]  # 蓝色到黄色
@@ -127,7 +130,7 @@ for episode in tqdm(attn_p_list):
     cmap = LinearSegmentedColormap.from_list("mycmap", map_colors)
     full_activations = np.zeros(point_clouds.shape[0])
     min_activate = 1e9
-    for query_x_attn_weight in avg_x_attn_weight:
+    for query_x_attn_weight in avg_x_attn_weight[:3]:
         ## 选出topk的激活值
         
         _, argmax_idx = query_x_attn_weight.float().topk(k=10)
@@ -175,8 +178,8 @@ for episode in tqdm(attn_p_list):
     pcd.colors = o3d.utility.Vector3dVector(mixed_colors)
     o3d.visualization.draw_geometries([pcd, *axis_aligned_bounding_box_list])
     
-        
-        
+         
+    
         ## old visualization version
         # ## [layers(24), nhead(32), scen_token(512)+text_token(?)]
         # attn_weight = attn_infos['attn_weight']

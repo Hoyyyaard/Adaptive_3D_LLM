@@ -283,21 +283,21 @@ class captioner(nn.Module):
         prefix_feature = self.qformer_to_language_projection(query_outputs_latent)
         
         ## save x-attn here
-        # import os
-        # assert detector_output['enc_xyz'].shape[0] == 1
-        # task_name = inputs['task_name']
-        # x_attn_weight = torch.stack(query_outputs['cross_attentions'], dim=0)
-        # attn_dict = {
-        #     'x_attn_weight' : x_attn_weight,
-        #     'xyz' : detector_output['enc_xyz'],
-        #     'scan_idx' : inputs['scan_idx'],
-        #     'scan_name': inputs['scan_name']
-        # }
-        # op_path = f'results/attn_vis/{task_name}'
-        # if not os.path.exists(op_path):
-        #     os.makedirs(op_path)
-        # scan_idx = inputs['scan_idx']
-        # torch.save(attn_dict, f'{op_path}/{scan_idx.item()}.pt')
+        import os
+        assert detector_output['enc_xyz'].shape[0] == 1
+        task_name = 'qa'
+        x_attn_weight = torch.stack(query_outputs['cross_attentions'], dim=0)
+        attn_dict = {
+            'x_attn_weight' : x_attn_weight,
+            'xyz' : detector_output['enc_xyz'],
+            'scan_idx' : inputs['scan_idx'],
+            'scan_name': inputs['scan_name']
+        }
+        op_path = f'results/attn_vis/ll3da/10k/{task_name}'
+        if not os.path.exists(op_path):
+            os.makedirs(op_path)
+        scan_idx = inputs['scan_idx']
+        torch.save(attn_dict, f'{op_path}/{scan_idx.item()}.pt')
         
         return prefix_feature
         

@@ -1410,74 +1410,7 @@ class FlexAttention(nn.Module):
         ## attn_weights [32, tgt_len, src_len]
         attn_weights = attn_weights[:, :, :tgt_len]
         src_len = tgt_len
-        
-        # ## TODO：check inference
-        # if hr_key_value_states is not None:        ## [bs, text_seq_len, 4*32, 2048]
-        #     dense_scene_tokens_num = hr_key_value_states.shape[2]
-        #     src_len = key_states.size(1) + dense_scene_tokens_num
-        #     ## 计算dense_scene_tokens的attention
-        #     for text_query_token_id in range(query_states.shape[1]-self.config.scene_token_num):
-                
-        #         if not self.training:
-        #             text_query_token_id=query_states.shape[1]-self.config.scene_token_num-1
-                
-        #         query_state_per_token = query_states[:, text_query_token_id+ self.config.scene_token_num, :].unsqueeze(1)
-        #         attn_weight_per_token = attn_weights[:, text_query_token_id+ self.config.scene_token_num, :].unsqueeze(1)
-        #         attn_mask_per_token = attention_mask[:, :, text_query_token_id+ self.config.scene_token_num, :].unsqueeze(2)
-                
-        #         flex_key_state_per_token = self._shape(hr_key_states[:, text_query_token_id, :].unsqueeze(1), -1, bsz).view(*proj_shape)
-                
-        #         flex_attn_weight_per_token = torch.bmm(query_state_per_token, flex_key_state_per_token.transpose(1,2))
-        #         flex_attn_mask_per_token = torch.zeros(bsz, 1, 1, dense_scene_tokens_num, device=attn_mask_per_token.device, dtype=attn_mask_per_token.dtype)
-                
-        #         attn_weight_per_token = torch.cat([attn_weight_per_token, flex_attn_weight_per_token], dim=-1)
-        #         attn_mask_per_token = torch.cat([attn_mask_per_token, flex_attn_mask_per_token], dim=-1)
 
-        #         flex_value_states_per_token = self._shape(hr_value_states[:, text_query_token_id, :].unsqueeze(1), -1, bsz).view(*proj_shape)
-        #         value_states_per_token = torch.cat([value_states, flex_value_states_per_token], dim=1)
-                
-        #         if attn_weight_per_token.size() != (bsz * self.num_heads, 1, src_len):
-        #             raise ValueError(
-        #                 f"Attention weights should be of size {(bsz * self.num_heads, 1, src_len)}, but is"
-        #                 f" {attn_weight_per_token.size()}"
-        #             )
-            
-        #         if attn_mask_per_token.size() != (bsz, 1, 1, src_len):
-        #             raise ValueError(
-        #                 f"Attention mask should be of size {(bsz, 1, 1, src_len)}, but is {attn_mask_per_token.size()}"
-        #             )
-        #         attn_weight_per_token = attn_weight_per_token.view(bsz, self.num_heads, 1, src_len) + attn_mask_per_token
-        #         attn_weight_per_token = torch.max(
-        #             attn_weight_per_token, torch.tensor(torch.finfo(attn_weight_per_token.dtype).min, device=attn_weight_per_token.device)
-        #         )
-        #         attn_weight_per_token = attn_weight_per_token.view(bsz * self.num_heads, 1, src_len)
-
-        #         # attn_weights_bf_sm[:, text_query_token_id, :] = attn_weight_per_token[:, :, :key_states.size(1)]
-        #         # upcast to fp32 if the weights are in fp16. Please see https://github.com/huggingface/transformers/pull/17437
-        #         if attn_weight_per_token.dtype == torch.float16:
-        #             attn_weight_per_token = nn.functional.softmax(attn_weight_per_token, dim=-1, dtype=torch.float32).to(torch.float16)
-        #         else:
-        #             attn_weight_per_token = nn.functional.softmax(attn_weight_per_token, dim=-1)
-
-        #         if layer_head_mask is not None:
-        #             if layer_head_mask.size() != (self.num_heads,):
-        #                 raise ValueError(
-        #                     f"Head mask for a single layer should be of size {(self.num_heads,)}, but is"
-        #                     f" {layer_head_mask.size()}"
-        #                 )
-        #             attn_weight_per_token = layer_head_mask.view(1, -1, 1, 1) * attn_weight_per_token.view(bsz, self.num_heads, 1, src_len)
-        #             attn_weight_per_token = attn_weight_per_token.view(bsz * self.num_heads, 1, src_len)
-
-        #         attn_probs_per_token = nn.functional.dropout(attn_weight_per_token, p=self.dropout, training=self.training)
-
-        #         attn_output_per_token = torch.bmm(attn_probs_per_token, value_states_per_token)
-                
-        #         attn_output[:, text_query_token_id, :] = attn_output_per_token.squeeze(1)
-        #         attn_weights[:, text_query_token_id, :] = attn_weight_per_token[:, :, :key_states.size(1)].squeeze(1)
-                
-        #         if not self.training:
-        #             break
-            
         if output_attentions:
             # this operation is a bit awkward, but it's required to
             # make sure that attn_weights keeps its gradient.
@@ -1908,6 +1841,8 @@ class FlexOPTDecoder(OPTDecoder):
 
         causal_attention_mask[..., :, :scene_token_num] = final_attn_mask
 
+
+        attention_mask[:, :dense_pcd_info['token_instance_mask'].shape[1]] = dense_pcd_info['token_instance_mask']
         pos_embeds = self.embed_positions(attention_mask, past_key_values_length)
 
         if self.project_in is not None:
@@ -2119,7 +2054,7 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         # the lm_head weight is automatically tied to the embed tokens weight
         self.lm_head = nn.Linear(config.word_embed_proj_dim, config.vocab_size, bias=False)
         self.use_ll3da_scene_token = config.use_ll3da_scene_token
-        in_channel = 768+128 if not config.use_ll3da_scene_token else 256
+        in_channel = 768 if not config.use_ll3da_scene_token else 256
         # self.scene_token_in_head = nn.Linear(in_channel, in_channel, bias=False)
         # if not config.use_ll3da_scene_token:
         #     self.encoder = self._build_mask_transformer_encoder(config)
@@ -2130,7 +2065,7 @@ class FlexOPTForCausalLM(OPTForCausalLM):
             nn.Linear(1024, 2048),
             nn.ReLU()
         )
-        self.xyz_head = nn.Linear(3, 128, bias=False)
+        # self.xyz_head = nn.Linear(3, 128, bias=False)
         
         self.post_init()
     
@@ -2154,7 +2089,7 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         
         return encoder
     
-    def _run_mask_tranformer_encoder(self, scene_tokens, xyz):
+    def _run_mask_tranformer_encoder(self, scene_tokens):
         if self.use_ll3da_scene_token:
             enc_features = self.encoder_to_llm_projection(scene_tokens)
             return enc_features
@@ -2281,9 +2216,24 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         ## get sparse scene object tokens from openscene_sparse_fts by set abstract layer here
         if batch_data_label is None:
             batch_data_label = copy.deepcopy(self.batch_data_label)
-        xyz = batch_data_label['scene_xyz']
-        scene_tokens = torch.cat([batch_data_label['scene_tokens'], self.xyz_head(batch_data_label['scene_xyz'])], dim=-1)
-        pre_enc_features = self._run_mask_tranformer_encoder(scene_tokens, xyz)
+        
+        ## 这里是为了跟之后的click prompt encoder一直 让click prompt更好attn scene token
+        xyz = batch_data_label['scene_xyz'].view(-1, 1, 3)
+        ## [bs, 512, 8, 2048]
+        click_xyz, _  = self.prompt_encoder(
+                                click_query = xyz, 
+                                click_qmask = torch.ones_like(xyz[...,0]).to(xyz.device).to(xyz.dtype),
+                                point_cloud_dims = [
+                                        batch_data_label["point_cloud_dims_min"].repeat(512, 1),
+                                        batch_data_label["point_cloud_dims_max"].repeat(512, 1),
+                                    ]
+                                )
+        ## [bs, 512, 2048]
+        click_xyz = click_xyz.view(-1, 512, 8, 2048).mean(2)
+        
+        # scene_tokens = torch.cat([batch_data_label['scene_tokens'], click_xyz], dim=-1)
+        pre_enc_features = self._run_mask_tranformer_encoder(batch_data_label['scene_tokens'])
+        pre_enc_features = pre_enc_features + click_xyz                                   
         
         # batch_data_label['dense_region_tokens'] = self.scene_token_in_head(batch_data_label['dense_region_tokens'])
         
@@ -2348,7 +2298,7 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         #     'scan_name': batch_data_label['scan_name']
         # }
         # scan_idx = batch_data_label['scan_idx'].item()
-        # op_path = f'results/attn_vis_flex/encoder-openscene-maskformer-axis-align-concat-xyz-wocausal-womaskformer-llmwdistmask-instanceactivatemask-finetune-opt-1-3b/2epoch/{task_name}/{scan_idx}'
+        # op_path = f'results/attn_vis_flex/encoder-openscene-maskformer-axis-align-wocausal-womaskformer-llmwdistmask-tokenwclickxyz-activatetoken-finetune-opt-1-3b/8k/{task_name}/{scan_idx}'
         # if not os.path.exists(op_path):
         #     os.makedirs(op_path)
         # scan_idx = batch_data_label['scan_idx']
