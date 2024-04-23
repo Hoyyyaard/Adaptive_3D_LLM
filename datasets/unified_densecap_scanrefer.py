@@ -294,7 +294,7 @@ class Dataset(ScanNetBaseDataset):
         ret_dict['qformer_input_ids'] = qformer_inputs['input_ids'][0].astype(np.int64)
         ret_dict['qformer_attention_mask'] = qformer_inputs['attention_mask'][0].astype(np.float32)
         
-        if self.args.finetune_flex_opt:
+        if self.args.finetune_flex_opt or self.args.abl_ll3da_w_openscene_token:
             if self.args.use_ll3da_scene_token:
                 ret_dict.update(self.ll3da_fts_cache.get_ll3da_scan_datas(scan_name))
             else:
@@ -305,17 +305,39 @@ class Dataset(ScanNetBaseDataset):
                 openscene_ret_dict['point_cloud_dims_min'] = pcd[..., :3].min(axis=0)
                 openscene_ret_dict['point_cloud_dims_max'] = pcd[..., :3].max(axis=0)
                 
+                ## 1 代表不mask
+                token_instance_mask = np.ones(openscene_ret_dict['scene_tokens'].shape[0]).astype(np.float32)
+                
                 click_query = np.zeros((1, 3))
                 click_mask = np.zeros((1,))
                 if self.split == 'train':
+                    # if random.random() > 0.5:
+                    has_instance = np.unique(openscene_ret_dict['token_instance_label'])
+                    if int(self.annotations[idx]['object_id']) + 1 in has_instance:
+                        token_instance_mask[openscene_ret_dict['token_instance_label'] == int(self.annotations[idx]['object_id']) + 1] = 0
+                    if (token_instance_mask == 0).sum() > 0:
+                        ## reverse mask
+                        token_instance_mask = 1 - token_instance_mask
+                        ## aug
+                        # total_activate_token_num = 50
+                        # activate_token_num = (token_instance_mask == 1).sum()
+                        # if total_activate_token_num > activate_token_num:
+                        #     zero_index = np.where(token_instance_mask == 0)[0]
+                        #     select_zero_index = np.random.choice(zero_index, total_activate_token_num-activate_token_num, replace=False)
+                        #     token_instance_mask[select_zero_index] = 1
+                    # else:
                     target_obj_id = int(self.annotations[idx]['object_id'])
                     try:
                         object_points = pcd[instance_labels == (target_obj_id + 1)]    # npt x 3
                         click_query[0] = random.choice(object_points)
                         click_mask[0] = 1
-                    except:pass
+                    except Exception as e: 
+                        click_query[0] = ret_dict["gt_box_centers"][match_mask == 1].reshape(3,).astype(np.float32)
+                        click_mask[0] = 1
                 openscene_ret_dict['click_query'] = click_query.astype(np.float32)
                 openscene_ret_dict['click_mask'] = click_mask.astype(np.float32)
+                
+                openscene_ret_dict['token_instance_mask'] = token_instance_mask
                 
                 openscene_ret_dict['input_ids'] = ret_dict['input_ids']
                 openscene_ret_dict['attention_mask'] = ret_dict['attention_mask']
@@ -325,13 +347,11 @@ class Dataset(ScanNetBaseDataset):
                 openscene_ret_dict['scan_idx'] = np.array(idx).astype(np.int64)
                 openscene_ret_dict['instruction'] = ret_dict['instruction']
                 openscene_ret_dict['instruction_mask'] = ret_dict['instruction_mask']
+                del openscene_ret_dict['openscene_point_clouds']
+                del openscene_ret_dict['openscene_instance_labels']
                 ret_dict = openscene_ret_dict
-            ret_dict['scan_name'] = scan_name
+        ret_dict['scan_name'] = scan_name
         
-        
-        if self.args.abl_ll3da_w_openscene_token:
-            ret_dict['enc_features'] = torch.load(f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_for_ll3da/{scan_name}/enc_features.pt', map_location='cpu').numpy()[0].astype(np.float32)
-            ret_dict['enc_xyz'] = torch.load(f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_for_ll3da/{scan_name}/enc_xyz.pt', map_location='cpu').numpy()[0].astype(np.float32)
         return ret_dict
    
    

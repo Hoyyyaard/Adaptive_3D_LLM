@@ -32,9 +32,9 @@
   "num_finetune_hidden_layers": 9,
   "attn_softmax_scale": 100,
 
-  "scene_token_num": 512,
-  "scene_token_sample_radius": 0.2,
-  "scene_token_sample_num_per_ball": 128,
+  "scene_token_num": 128,
+  "scene_token_sample_radius": 0.4,
+  "scene_token_sample_num_per_ball": 512,
 
   "region_radius": 0.25,
   "region_sample_num": 5000,

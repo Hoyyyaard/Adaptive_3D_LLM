@@ -119,11 +119,11 @@ def evaluate(
                 batch_data_label[key] = batch_data_label[key]
         
         model_input = {
-            'point_clouds': batch_data_label['point_clouds'],
+            'point_clouds': batch_data_label.get('point_clouds',None),
             'point_cloud_dims_min': batch_data_label['point_cloud_dims_min'],
             'point_cloud_dims_max': batch_data_label['point_cloud_dims_max'],
-            'qformer_input_ids': batch_data_label['qformer_input_ids'],
-            'qformer_attention_mask': batch_data_label['qformer_attention_mask'],
+            'qformer_input_ids': batch_data_label.get('qformer_input_ids',None),
+            'qformer_attention_mask': batch_data_label.get('qformer_attention_mask',None),
             'instruction': batch_data_label['instruction'],
             'instruction_mask': batch_data_label['instruction_mask'],
             'scan_idx' : batch_data_label['scan_idx'],

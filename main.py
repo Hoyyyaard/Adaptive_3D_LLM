@@ -148,13 +148,11 @@ def make_args_parser():
     
     parser.add_argument("--ll3da_token_preprocess", action='store_true')
     
-    ## use ll3da scene token instead of openscene token
-    parser.add_argument("--use_ll3da_scene_token", action='store_true')
-    
     ## use openscene token instead of ll3da scene token for ll3da
     parser.add_argument("--abl_ll3da_w_openscene_token", action='store_true')
     
     parser.add_argument("--openscene_cache_dir", required=True)
+    parser.add_argument("--token_instance_mask", required=True)
     
     
     args = parser.parse_args()
@@ -183,10 +181,9 @@ def make_args_parser():
     print(f'only_finetune_flex_attn: ', args.only_finetune_flex_attn)
     print(f'finetune_opt1_3b: ', args.finetune_opt1_3b)
     print(f'll3da_token_preprocess: ', args.ll3da_token_preprocess)
-    print(f'use_ll3da_scene_token: ', args.use_ll3da_scene_token)
     print(f'abl_ll3da_w_openscene_token: ', args.abl_ll3da_w_openscene_token)
-    if args.abl_ll3da_w_openscene_token:
-        os.environ['abl_ll3da_w_openscene_token'] = 'True'
+    if args.token_instance_mask:
+        os.environ['token_instance_mask'] = 'True'
     return args
 
 
@@ -442,17 +439,16 @@ def finetune_flex_opt_main(local_rank, args):
     ### build datasets and dataloaders
     dataset_config, datasets, dataloaders = build_dataset(args)
     from src.modeling_opt_flex import FlexOPTForCausalLM, Shell_Model
-    config = AutoConfig.from_pretrained('src/flex_opt_config.json')
+    config = AutoConfig.from_pretrained('ckpts/opt-model/config.json')
     ## 这里代码有bug 由于代码上的bug 第一层的flex self attn相当于self attn
     config.num_finetune_hidden_layers = args.num_finetune_hidden_layers + 1
-    config.num_hidden_layers = 24 - args.num_finetune_hidden_layers - 1
+    config.num_hidden_layers = config.num_hidden_layers - args.num_finetune_hidden_layers - 1
     print("acc_num_flex_hidden_layers: ", config.num_finetune_hidden_layers)
     print("acc_num_hidden_layers: ", config.num_hidden_layers)
     if args.freeze_flex_llm or args.finetune_opt1_3b:
         config.num_hidden_layers = config.num_finetune_hidden_layers + config.num_hidden_layers
         config.num_finetune_hidden_layers = 0
         print('============================freeze llm====================================')
-    config.use_ll3da_scene_token = args.use_ll3da_scene_token
     model = Shell_Model(config=config)
     
     if not args.freeze_flex_llm and not args.finetune_opt1_3b:
@@ -550,7 +546,17 @@ def finetune_flex_opt_main(local_rank, args):
                         layer_idx = int(find_key.split('.')[-1])-config.num_hidden_layers
                         flex_checkpoint[k.replace(find_key, f'model.decoder.flex_layers.{layer_idx}')] = v
                         flex_checkpoint.pop(k)
-                checkpoint = flex_checkpoint
+                # checkpoint = flex_checkpoint
+                
+                ## 
+                # zero_init_ckpt = {}
+                # for k,v in checkpoint.items():
+                #     if k.find('model.decoder.embed_tokens.weight') != -1 or \
+                #     k.find('model.decoder.embed_positions.weight') != -1:
+                #         zero_init_ckpt[k] = v
+                # checkpoint = zero_init_ckpt
+                
+                
             elif args.load_pretrain_encoder:
                 checkpoint = checkpoint['model']
                 replace_keys = [f'model.decoder.layers.{li+config.num_hidden_layers}' for li in range(config.num_finetune_hidden_layers)]

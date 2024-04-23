@@ -1723,13 +1723,9 @@ class FlexOPTDecoder(OPTDecoder):
         else:
             self.final_layer_norm = None
 
-        if config.use_flex_layer:
-            self.layers = nn.ModuleList([OPTDecoderLayer(config) for _ in range(config.num_hidden_layers)])
-            self.flex_layers = nn.ModuleList([FlexOPTDecoderLayer(config) for _ in range(config.num_finetune_hidden_layers)])
-        else:
-            print("warning!!! do not use flex layer")
-            self.layers = nn.ModuleList([OPTDecoderLayer(config) for _ in range(config.num_hidden_layers+config.num_finetune_hidden_layers)])
-            self.flex_layers = []
+    
+        self.layers = nn.ModuleList([OPTDecoderLayer(config) for _ in range(config.num_hidden_layers)])
+        self.flex_layers = nn.ModuleList([FlexOPTDecoderLayer(config) for _ in range(config.num_finetune_hidden_layers)])
         
         self._use_flash_attention_2 = config._attn_implementation == "flash_attention_2"
 
@@ -1851,10 +1847,60 @@ class FlexOPTDecoder(OPTDecoder):
                 attention_mask, input_shape, inputs_embeds, past_key_values_length
             )
         
-        ## scene token 不应该是causal的
-        causal_attention_mask[:,:,:520,:520] = 0.
+        
+        ## causal_attention_mask : [bs, 1, seq len, seq len]  
+        ## mask_for_visual_token : [bs , 512 ,512] True in the mask do not contribute to self-attention
+        ## scene token只能跟一点范围内的token交互
+        ## mask=1 是mask
+        # mask_for_visual_token, dist = self.compute_mask_for_scene_tokens(dense_pcd_info['scene_xyz'])
+        # mask_for_visual_token = mask_for_visual_token.int()
+        # mask_for_visual_token = mask_for_visual_token  # * torch.finfo(causal_attention_mask.dtype).min
+        
+        ## 这里计算instance mask有些任务只需要激活特定的token，所以需要mask掉其他token 
+        ## 这里相当于ll3da的visual prompt 
+        ## 这里的方法是只激活对应的instance的token
+        ## 这里的mask是用来控制对应的token是否激活 最后输出为0是激活
+        scene_token_num = 128
+        if os.getenv('token_instance_mask', 'False')  == 'True':
+            non_scene_token_num = causal_attention_mask.shape[-1] - scene_token_num
+            ## [bs, scene_token_num]
+            ## 这里的mask是1是激活 所以需要取反
+            token_instance_mask = 1 - dense_pcd_info['token_instance_mask'].int()
+            
+            ## 1. 计算q的scene token部分与k的scene token部分的attention
+            ### 禁止q token跟 k token 交互
+            col_token_instance_mask = token_instance_mask.unsqueeze(1)
+            col_token_instance_mask = col_token_instance_mask.expand(-1, token_instance_mask.shape[-1], -1)
+            ### 禁止k token跟 q token 交互
+            row_token_instance_mask = token_instance_mask.unsqueeze(-1)
+            row_token_instance_mask = row_token_instance_mask.expand(batch_size, -1, token_instance_mask.shape[-1])
+            scene_scene_token_instance_attn_mask = col_token_instance_mask | row_token_instance_mask
+            
+            ## 2.计算 q的text token部分与k的scene token部分的attention
+            ### 禁止q token跟 k token 交互
+            col_token_instance_mask = token_instance_mask.unsqueeze(1)
+            text_scene_token_instance_attn_mask = col_token_instance_mask.expand(-1, non_scene_token_num, -1)
+            ## [bs, whole seq len ,scene_token_num]
+            token_instance_attn_mask = torch.cat([scene_scene_token_instance_attn_mask, text_scene_token_instance_attn_mask], dim=-2)
+            
+            token_instance_attn_mask[:, :scene_token_num, : ] = token_instance_attn_mask[:, :scene_token_num, : ] #| mask_for_visual_token
+            final_attn_mask = token_instance_attn_mask.half()
+            final_attn_mask = final_attn_mask * torch.finfo(causal_attention_mask.dtype).min
+            final_attn_mask = final_attn_mask.unsqueeze(1)
+        
+        ## causal_attention_mask是0为激活 torch.finfo(causal_attention_mask.dtype).min为不激活
 
-        pos_embeds = self.embed_positions(attention_mask, past_key_values_length)
+        ## scene token 不应该是causal的
+        causal_attention_mask[:,:, :scene_token_num, :scene_token_num] = 0.
+        if os.getenv('token_instance_mask', 'False')  == 'True':
+            causal_attention_mask[..., :, :scene_token_num] = final_attn_mask
+        
+        if os.getenv('token_instance_mask', 'False')  == 'True':
+            instance_attention_mask = torch.clone(attention_mask)
+            instance_attention_mask[:, :dense_pcd_info['token_instance_mask'].shape[1]] = dense_pcd_info['token_instance_mask']
+            pos_embeds = self.embed_positions(attention_mask, past_key_values_length)
+        else:
+            pos_embeds = self.embed_positions(attention_mask, past_key_values_length)
 
         if self.project_in is not None:
             inputs_embeds = self.project_in(inputs_embeds)
@@ -2059,21 +2105,21 @@ class FlexOPTForCausalLM(OPTForCausalLM):
     def __init__(self, config):
         super().__init__(config)
         self.model = FlexOPTModel(config)
-        self.prompt_encoder = PromptEncoder()
+        
+        # self.prompt_encoder = PromptEncoder()
+        
         self.tokenizer = AutoTokenizer.from_pretrained('ckpts/opt-model')
 
         # the lm_head weight is automatically tied to the embed tokens weight
         self.lm_head = nn.Linear(config.word_embed_proj_dim, config.vocab_size, bias=False)
-        self.use_ll3da_scene_token = config.use_ll3da_scene_token
-        in_channel = 768 if not config.use_ll3da_scene_token else 256
-        # self.scene_token_in_head = nn.Linear(in_channel, in_channel, bias=False)
-        if not config.use_ll3da_scene_token:
-            self.encoder = self._build_mask_transformer_encoder(config)
+        in_channel = 768 
+        hidden_size = config.word_embed_proj_dim
+        # self.encoder = self._build_mask_transformer_encoder(config)
 
         self.encoder_to_llm_projection = nn.Sequential(
-            nn.Linear(in_channel, 2048),
+            nn.Linear(in_channel, hidden_size),
             nn.ReLU(),
-            nn.Linear(2048, 2048),
+            nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
         )
         
@@ -2100,18 +2146,15 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         return encoder
     
     def _run_mask_tranformer_encoder(self, scene_tokens, xyz):
-        if self.use_ll3da_scene_token:
-            enc_features = self.encoder_to_llm_projection(scene_tokens)
-            return enc_features
         
         # pre_enc_features = self.scene_token_in_head(scene_tokens)
         ## expects npoints x batch x channel features
-        pre_enc_features = scene_tokens.permute(1, 0, 2)
-        enc_xyz, enc_features, enc_inds = self.encoder(
-            pre_enc_features, xyz=xyz
-        )
-        enc_features = enc_features.permute(1, 0, 2)
-        enc_features = self.encoder_to_llm_projection(enc_features)
+        # pre_enc_features = scene_tokens.permute(1, 0, 2)
+        # enc_xyz, enc_features, enc_inds = self.encoder(
+        #     pre_enc_features, xyz=xyz
+        # )
+        # enc_features = enc_features.permute(1, 0, 2)
+        enc_features = self.encoder_to_llm_projection(scene_tokens)
         return enc_features
     
     @replace_return_docstrings(output_type=CausalLMOutputWithPast, config_class=_CONFIG_FOR_DOC)
@@ -2242,18 +2285,20 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         pre_enc_features_mask = torch.ones_like(pre_enc_features[..., 0])
         
         if past_key_values is None :
-            click_query = batch_data_label['click_query']
-            click_mask = batch_data_label['click_mask']
-            point_cloud_dims = [
-                batch_data_label["point_cloud_dims_min"],
-                batch_data_label["point_cloud_dims_max"],
-            ]
-            prompt_embeds, prompt_mask = self.prompt_encoder(point_cloud_dims, click_query, click_mask)
+            # click_query = batch_data_label['click_query']
+            # click_mask = batch_data_label['click_mask']
+            # point_cloud_dims = [
+            #     batch_data_label["point_cloud_dims_min"],
+            #     batch_data_label["point_cloud_dims_max"],
+            # ]
+            # prompt_embeds, prompt_mask = self.prompt_encoder(point_cloud_dims, click_query, click_mask)
             
-            inputs_embeds = torch.cat([pre_enc_features, prompt_embeds, inputs_embeds], dim=1)
-            attention_mask = torch.cat([pre_enc_features_mask, prompt_mask, attention_mask], dim=1)
-            self.prefix_len = pre_enc_features.shape[1] + prompt_embeds.shape[1]
-
+            # inputs_embeds = torch.cat([pre_enc_features, prompt_embeds, inputs_embeds], dim=1)
+            # attention_mask = torch.cat([pre_enc_features_mask, prompt_mask, attention_mask], dim=1)
+            # self.prefix_len = pre_enc_features.shape[1] + prompt_embeds.shape[1]
+            inputs_embeds = torch.cat([pre_enc_features, inputs_embeds], dim=1)
+            attention_mask = torch.cat([pre_enc_features_mask, attention_mask], dim=1)
+            self.prefix_len = pre_enc_features.shape[1]
         
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model.decoder(
@@ -2287,7 +2332,7 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         #     'scan_name': batch_data_label['scan_name']
         # }
         # scan_idx = batch_data_label['scan_idx'].item()
-        # op_path = f'results/attn_vis_flex/encoder-openscene-maskformer-axis-align-w-sm-obj-wocausal-finetune-opt-1-3b/4epoch/{task_name}/{scan_idx}'
+        # op_path = f'results/attn_vis_flex/test2/{task_name}/{scan_idx}'
         # if not os.path.exists(op_path):
         #     os.makedirs(op_path)
         # scan_idx = batch_data_label['scan_idx']
@@ -2345,7 +2390,8 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         
         import os
-        p = '/mnt/nfs/share/Adaptive/0420_openscene_scene_tokens_axis_align_w_pcd_info_s_512_0.2_128'
+        p = '/mnt/nfs/share/Adaptive/0423_openscene_scene_tokens_axis_align_w_pcd_info_w_token_instance_label_s_128_0.4_512'
+        os.makedirs(p, exist_ok=True)
         self.scan_name_list = os.listdir(p)
         scan_name = batch_data_label['scan_name'][0]
         ot_dir = f'{p}/{scan_name}'
@@ -2361,21 +2407,21 @@ class FlexOPTForCausalLM(OPTForCausalLM):
             return 
         
         scene_tokenizer = PointnetSAModuleVotes_WoMlp(
-            radius=self.config.scene_token_sample_radius,
-            nsample=self.config.scene_token_sample_num_per_ball,
-            npoint=self.config.scene_token_num,
-            normalize_xyz=True,
+            radius=0.4,
+            nsample=512,
+            npoint=128,
+            normalize_xyz=False,
             use_xyz=False
         )
-        region_tokenizer = PointnetSAModuleVotes_WoMlp(
-            radius=self.config.region_token_sample_radius,
-            nsample=self.config.region_token_sample_num_per_ball,
-            npoint=self.config.region_token_sample_num,
-            normalize_xyz=True,
-            use_xyz=False
-        )
-        region_radius = self.config.region_radius
-        region_nsample = self.config.region_sample_num
+        # region_tokenizer = PointnetSAModuleVotes_WoMlp(
+        #     radius=self.config.region_token_sample_radius,
+        #     nsample=self.config.region_token_sample_num_per_ball,
+        #     npoint=self.config.region_token_sample_num,
+        #     normalize_xyz=True,
+        #     use_xyz=False
+        # )
+        # region_radius = self.config.region_radius
+        # region_nsample = self.config.region_sample_num
         
 
         ## concat xyz with fts
@@ -2389,15 +2435,15 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         xyz = batch_data_label['openscene_sparse_pcd']
         
         
-        other_pcd_info = {
-            'instance_labels' : instance_labels ,
-            'point_clouds': xyz, 
-        }
-        
         pre_enc_xyz, pre_enc_features, pre_enc_inds = scene_tokenizer(xyz, features)
         pre_enc_features = pre_enc_features.transpose(1, 2).contiguous()
         
-        # token_instance_label = instance_labels[:, pre_enc_inds[0].long()]
+        token_instance_label = instance_labels[:, pre_enc_inds[0].long()]
+        other_pcd_info = {
+            'instance_labels' : instance_labels ,
+            'point_clouds': xyz, 
+            'token_instance_label': token_instance_label
+        }
         
         torch.save(pre_enc_inds, f'{ot_dir}/enc_inds.pt')
         torch.save(pre_enc_xyz, f'{ot_dir}/enc_xyz.pt')
@@ -2452,199 +2498,6 @@ class FlexOPTForCausalLM(OPTForCausalLM):
             # open3d.visualization.draw_geometries([select_vis_pcd])
 
 
-@torch.no_grad()
-def greedy_decode(transformer: Callable, **kwargs) -> Tensor:
-    
-    ## prepare inputs
-    max_length = kwargs['max_length']
-    inputs_embeds = kwargs['inputs_embeds']
-    batch_data_label = kwargs['batch_data_label']
-    # lm_head = kwargs['lm_head']
-    
-    batch, _, channel = inputs_embeds.shape
-    
-    ## prepare storage
-    output_ids = torch.ones(batch, max_length).long().to(inputs_embeds.device)
-    output_ids = output_ids * kwargs['eos_token_id']
-    
-    ## prepare temporal storage of inputs
-    temporal_inputs = inputs_embeds
-    finished_batchs = torch.zeros(batch).bool().to(inputs_embeds.device)
-    embedding_layer = transformer.get_input_embeddings()
-    for word_id in range(max_length):
-        
-        step_output = transformer(
-            inputs_embeds=temporal_inputs,
-            batch_data_label=copy.deepcopy(batch_data_label)
-        )
-        
-        # logits = lm_head(step_output[0]).contiguous()
-        logits = step_output.logits
-        ## greedy decoding, find out whats the most possible word
-        next_word_id = logits[:, -1, :].argmax(-1)
-        
-        # check those finished sentences and overwrite
-        finished_batchs |= (next_word_id == kwargs['eos_token_id'])
-        next_word_id[finished_batchs] = kwargs['eos_token_id']
-        
-        output_ids[:, word_id] = next_word_id.long()    # (batch, )
-        
-        temporal_inputs = torch.cat((inputs_embeds, embedding_layer(output_ids[:, :word_id+1])), dim=1)
-        
-    return OrderedDict({'output_ids': output_ids.long()})
-    
-    
-@torch.no_grad()
-def beam_search_decode(transformer: Callable, **kwargs) -> Tensor:
-    ## prepare inputs
-    max_length = kwargs['max_length']
-    attention_mask = kwargs['attention_mask']
-    inputs_embeds = kwargs['inputs_embeds'][attention_mask == 1].unsqueeze(0) # batch x nwords x channel
-    dense_pcd_info = kwargs['dense_pcd_info']
-    lm_head = kwargs['lm_head']
-    # for safety issues
-    assert kwargs['num_beams'] is not None, (
-        'num_beams should not be provided if calling beam search!'
-    )
-    nbeams = kwargs['num_beams']
-    
-    batch, prefix_length, channel = inputs_embeds.shape
-    # batch x nbeams x length x channel
-    expanded_inputs_embeds = inputs_embeds.unsqueeze(1).repeat(1, nbeams, 1, 1)
-    expanded_dense_pcd_info = {k:v.repeat(nbeams, 1, 1, 1) for k,v in dense_pcd_info.items()}
-    ## prepare storage
-    output_scores = torch.zeros(batch, nbeams).to(inputs_embeds.device)
-    output_ids = torch.ones(batch, nbeams, max_length).to(inputs_embeds.device)
-    output_ids = output_ids * kwargs['eos_token_id']
-    batch_beam_results = OrderedDict({
-        batch_id: [
-            [float('-inf'), (float('-inf'), float('-inf')), None, None] \
-                for b in range(nbeams)] \
-                    for batch_id in range(batch)
-    })
-    embedding_layer = kwargs['embedding_layer']
-    
-    for word_id in range(max_length):
-        
-        if word_id == 0:    # cold start for the first generation step
-        
-            step_output = transformer(
-                inputs_embeds=inputs_embeds,
-                dense_pcd_info=dense_pcd_info
-            )
-            logits = lm_head(step_output[0]).contiguous()
-            # topk inds
-            topk_scores, topk_inds = logits[:, -1, :].topk(
-                k=nbeams, largest=True, dim=-1
-            )   # batch x nbeams
-            
-            # store temporal scores for each beam
-            output_ids[..., word_id] = topk_inds
-            output_scores += torch.log_softmax(topk_scores, dim=-1)
-            
-        else:   # warm start from the previous step
-            
-            # batch x nbeams x word_id
-            generated_words = output_ids[..., :word_id]
-            
-            # batch x nbeams x (length + word_id) x channel
-            temporal_inputs = torch.cat((expanded_inputs_embeds, embedding_layer(generated_words.long())), dim=2)
-            
-            step_output = transformer(
-                inputs_embeds=temporal_inputs.reshape(
-                    batch * nbeams, prefix_length + word_id, channel
-                ),
-                dense_pcd_info=expanded_dense_pcd_info
-            )
-            logits = lm_head(step_output[0]).contiguous()
-            last_word_logits = logits[:, -1, :].reshape(
-                batch, nbeams, -1
-            )   # batch x nbeams x nvocabs
-            
-            # beam_scores: batch x nbeams x nvocabs
-            if word_id != max_length - 1:
-                beam_scores = output_scores.unsqueeze(-1) + torch.log_softmax(
-                    last_word_logits, dim=-1
-                )
-                
-                output_scores, select_inds = beam_scores.reshape(batch, -1).topk(
-                    k=nbeams, largest=True, dim=-1
-                )
-                # batch x k
-                select_beam_id = select_inds // last_word_logits.shape[-1]
-                select_word_id = select_inds % last_word_logits.shape[-1]
-                
-            else:
-                
-                # force ends of certain captions
-                last_word_probs = torch.log_softmax(last_word_logits, dim=-1)
-                output_scores += last_word_probs[..., kwargs['eos_token_id']]
-                select_beam_id = \
-                    torch.arange(nbeams).to(output_ids.device).unsqueeze(0).repeat(batch, 1)
-                select_word_id = \
-                    torch.ones_like(output_ids[..., -1]) * kwargs['eos_token_id']
-            
-            # gather generated beams
-            output_ids = torch.gather(
-                output_ids, 1, 
-                select_beam_id.unsqueeze(-1).repeat(1, 1, max_length)
-            )
-            output_ids[..., word_id] = select_word_id
-            
-            ## ---- process the finished beams: batch x nbeams
-            sentence_log_prob = output_scores / (word_id + 1)
-            
-            finished_batch, finished_beams = torch.where(
-                select_word_id == kwargs['eos_token_id']
-            )
-            for batch_id, beam_id in zip(
-                    finished_batch.cpu().tolist(), 
-                    finished_beams.cpu().tolist()
-                ):
-                sentence = [
-                    sentence_log_prob[batch_id, beam_id].cpu().tolist(),
-                    (word_id, beam_id),
-                    output_ids[batch_id, beam_id],          # max_length
-                    sentence_log_prob[batch_id, [beam_id]]  # 1
-                ]
-                heapq.heappushpop(batch_beam_results[batch_id], sentence)
-                
-            
-            # neglect the finished beam
-            output_scores[select_word_id == kwargs['eos_token_id']] = -float('inf')
-            
-    ## final call, gather beam results from heaps
-    output_ids = torch.cat([
-        torch.cat(
-            [
-                beam_sentence.unsqueeze(0) \
-                    for _, _, beam_sentence, _ in batch_beam_results[batch_id]
-            ], dim=0
-        ).unsqueeze(0) \
-            for batch_id in range(batch)
-    ], dim=0)   # batch x beam x max_length
-    
-    output_scores = torch.cat([
-        torch.cat(
-            [
-                beam_log_prob.unsqueeze(0) \
-                    for _, _, _, beam_log_prob in batch_beam_results[batch_id]
-            ], dim=0
-        ).unsqueeze(0) \
-            for batch_id in range(batch)
-    ], dim=0).squeeze(-1)   # batch x beam x 1
-    
-    return OrderedDict({
-        'output_ids': torch.gather(
-            output_ids.long(), 1, 
-            output_scores.argmax(-1, keepdim=True).unsqueeze(1).repeat(1, 1, max_length)
-        ).squeeze(1),
-        'output_scores': output_scores,
-        'beam_output_ids': output_ids.long()
-    })
-    
-
-
 class Shell_Model(nn.Module):
     def __init__(self, config) -> None:
         super(Shell_Model, self).__init__()
@@ -2672,13 +2525,13 @@ class Shell_Model(nn.Module):
             output_ids_list = output_ids_list * caption_config['eos_token_id']
             for batch_id in range(input_ids.shape[0]):
                 data_label = {
-                    'dense_region_tokens': batch_data_label['dense_region_tokens'][batch_id].unsqueeze(0),
+                    # 'dense_region_tokens': batch_data_label['dense_region_tokens'][batch_id].unsqueeze(0),
                     'click_mask': batch_data_label['click_mask'][batch_id].unsqueeze(0),
                     'click_query': batch_data_label['click_query'][batch_id].unsqueeze(0),
                     'scene_tokens': batch_data_label['scene_tokens'][batch_id].unsqueeze(0),
                     'scene_xyz': batch_data_label['scene_xyz'][batch_id].unsqueeze(0),
-                    'dense_region_tokens': batch_data_label['dense_region_tokens'][batch_id].unsqueeze(0),
-                    'dense_region_xyz': batch_data_label['dense_region_xyz'][batch_id].unsqueeze(0),
+                    # 'dense_region_tokens': batch_data_label['dense_region_tokens'][batch_id].unsqueeze(0),
+                    # 'dense_region_xyz': batch_data_label['dense_region_xyz'][batch_id].unsqueeze(0),
                     'point_cloud_dims_min': batch_data_label['point_cloud_dims_min'][batch_id].unsqueeze(0),
                     'point_cloud_dims_max': batch_data_label['point_cloud_dims_max'][batch_id].unsqueeze(0),
                     'task_name': 'qa',

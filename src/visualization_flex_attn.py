@@ -8,7 +8,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 
-attn_dir = 'results/attn_vis_flex/encoder-openscene-maskformer-axis-align-w-sm-obj-wocausal-finetune-opt-1-3b/4epoch/qa'
+attn_dir = 'results/attn_vis_flex/test2/qa'
 # exp_dir = 'results/toy_exp/nipus_exp/unified_scanqa/finetune_model/encoder-openscene-maskformer-axis-align-w-sm-obj-wocausal/4layer/finetune_flex_self_attn/1epoch/qa_corpus_val.json'
 
 ## FIXME
@@ -21,7 +21,7 @@ attn_dir = 'results/attn_vis_flex/encoder-openscene-maskformer-axis-align-w-sm-o
 
 
 def _get_scan_data(scan_name,):
-    data_path = 'data/scannet/scannet_data_w_sm_obj_dense'
+    data_path = 'data/scannet/scannet_data_dense'
     mesh_vertices = np.load(os.path.join(data_path, scan_name) + "_aligned_vert.npy")
     instance_labels = np.load(
         os.path.join(data_path, scan_name) + "_ins_label.npy"
@@ -109,7 +109,7 @@ for episode in tqdm(attn_p_list):
     attn_weight = attn_infos['attn_weight']
     xyz = attn_infos['xyz']
     ## only perserve last k layers
-    attn_weight = attn_weight[-16:, ...]
+    # attn_weight = attn_weight[-16:, ...]
     ## only perserve scene token
     attn_weight = attn_weight[..., :512]
     ## only perserve text token as query
@@ -131,6 +131,7 @@ for episode in tqdm(attn_p_list):
         ## 选出topk的激活值
         
         _, argmax_idx = query_x_attn_weight.float().topk(k=10)
+        print(argmax_idx)
         instrest_xyz = xyz[0, argmax_idx]
         
         ## 由于没有xyz在原始点云中的ind，所以concat在原始点云后面

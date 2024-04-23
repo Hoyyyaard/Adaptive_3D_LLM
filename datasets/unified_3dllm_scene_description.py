@@ -153,13 +153,17 @@ class Dataset(ScanNetBaseDataset):
         ret_dict['qformer_input_ids'] = qformer_inputs['input_ids'][0].astype(np.int64)
         ret_dict['qformer_attention_mask'] = qformer_inputs['attention_mask'][0].astype(np.float32)
         
-        if self.args.finetune_flex_opt:
+        if self.args.finetune_flex_opt or self.args.abl_ll3da_w_openscene_token:
             if self.args.use_ll3da_scene_token:
                 ret_dict.update(self.ll3da_fts_cache.get_ll3da_scan_datas(scan_name))
             else:
                 openscene_ret_dict = (self.openscene_fts_cache.get_openscene_scan_datas(scan_name, preprocess=self.args.token_preprocess))
                 pcd = openscene_ret_dict['openscene_point_clouds']
                 instance_labels = openscene_ret_dict['openscene_instance_labels']
+                
+                ## 1 代表不mask
+                token_instance_mask = np.ones(openscene_ret_dict['scene_tokens'].shape[0]).astype(np.float32)
+                openscene_ret_dict['token_instance_mask'] = token_instance_mask
                 
                 openscene_ret_dict['point_cloud_dims_min'] = pcd[..., :3].min(axis=0)
                 openscene_ret_dict['point_cloud_dims_max'] = pcd[..., :3].max(axis=0)
@@ -178,11 +182,9 @@ class Dataset(ScanNetBaseDataset):
                 openscene_ret_dict['instruction'] = ret_dict['instruction']
                 openscene_ret_dict['instruction_mask'] = ret_dict['instruction_mask']
                 ret_dict = openscene_ret_dict
-            ret_dict['scan_name'] = scan_name
+                del openscene_ret_dict['openscene_point_clouds']
+                del openscene_ret_dict['openscene_instance_labels']
+        ret_dict['scan_name'] = scan_name
             
-        
-        if self.args.abl_ll3da_w_openscene_token:
-            ret_dict['enc_features'] = torch.load(f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_for_ll3da/{scan_name}/enc_features.pt', map_location='cpu').numpy()[0].astype(np.float32)
-            ret_dict['enc_xyz'] = torch.load(f'/mnt/nfs/share/Adaptive/openscene_scene_tokens_axis_align_for_ll3da/{scan_name}/enc_xyz.pt', map_location='cpu').numpy()[0].astype(np.float32)
         return ret_dict
    
