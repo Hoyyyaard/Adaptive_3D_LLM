@@ -8,7 +8,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 
-attn_dir = 'results/attn_vis_flex/test2/qa'
+attn_dir = 'results/attn_vis_flex/0423-EncoderMLP-WoVisualPrpmpt-ST128WoXYZ-OPT1_3bmWoCausalMask/10k/qa'
 # exp_dir = 'results/toy_exp/nipus_exp/unified_scanqa/finetune_model/encoder-openscene-maskformer-axis-align-w-sm-obj-wocausal/4layer/finetune_flex_self_attn/1epoch/qa_corpus_val.json'
 
 ## FIXME
@@ -111,15 +111,15 @@ for episode in tqdm(attn_p_list):
     ## only perserve last k layers
     # attn_weight = attn_weight[-16:, ...]
     ## only perserve scene token
-    attn_weight = attn_weight[..., :512]
+    attn_weight = attn_weight[..., :128]
     ## only perserve text token as query
-    attn_weight = attn_weight[:, :, 512:, :]
+    attn_weight = attn_weight[:, :, 128:, :]
     ## mean in nhead
     ## [layers(16), text_token(?), scen_token(512)]
     avg_attn_weight = attn_weight.mean(1)
     ## mean in layer
     ## [text_token(?), scen_token(512)]
-    avg_x_attn_weight = avg_attn_weight.mean(0)
+    avg_x_attn_weight = avg_attn_weight.mean(1)
     
     # 定义从蓝色到黄色的颜色映射
     map_colors = ["blue", "yellow", "red"]  # 蓝色到黄色
@@ -131,6 +131,7 @@ for episode in tqdm(attn_p_list):
         ## 选出topk的激活值
         
         _, argmax_idx = query_x_attn_weight.float().topk(k=10)
+        print(_)
         print(argmax_idx)
         instrest_xyz = xyz[0, argmax_idx]
         

@@ -123,7 +123,7 @@ def evaluate(
             'point_cloud_dims_min': batch_data_label['point_cloud_dims_min'],
             'point_cloud_dims_max': batch_data_label['point_cloud_dims_max'],
             'qformer_input_ids': batch_data_label.get('qformer_input_ids',None),
-            'qformer_attention_mask': batch_data_label.get('qformer_attention_mask',None),
+            'qformer_attention_mask': batch_data_label.get('qformer_input_ids',None),
             'instruction': batch_data_label['instruction'],
             'instruction_mask': batch_data_label['instruction_mask'],
             'scan_idx' : batch_data_label['scan_idx'],

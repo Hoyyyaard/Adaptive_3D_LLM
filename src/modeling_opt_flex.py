@@ -1590,7 +1590,7 @@ class FlexOPTDecoderLayer(OPTDecoderLayer):
         self.fc2 = nn.Linear(config.ffn_dim, self.embed_dim, bias=config.enable_bias)
         self.final_layer_norm = nn.LayerNorm(self.embed_dim, elementwise_affine=config.layer_norm_elementwise_affine)
 
-        self.dense_region_selector = Dense_Region_Selector(config)
+        # self.dense_region_selector = Dense_Region_Selector(config)
     
         
     def forward(
@@ -1675,8 +1675,10 @@ class FlexOPTDecoderLayer(OPTDecoderLayer):
         if use_cache:
             outputs += (present_key_value,)
             
-        hr_key_value_states, top_indices = self.dense_region_selector(scene_token_hidden_state, dense_pcd_info['dense_region_tokens'])
-
+        # hr_key_value_states, top_indices = self.dense_region_selector(scene_token_hidden_state, dense_pcd_info['dense_region_tokens'])
+        hr_key_value_states = None
+        top_indices = None
+        
         outputs += (hr_key_value_states,)
         outputs += (top_indices,)
         
@@ -1860,7 +1862,7 @@ class FlexOPTDecoder(OPTDecoder):
         ## 这里相当于ll3da的visual prompt 
         ## 这里的方法是只激活对应的instance的token
         ## 这里的mask是用来控制对应的token是否激活 最后输出为0是激活
-        scene_token_num = 128
+        scene_token_num = 256
         if os.getenv('token_instance_mask', 'False')  == 'True':
             non_scene_token_num = causal_attention_mask.shape[-1] - scene_token_num
             ## [bs, scene_token_num]
@@ -2313,6 +2315,7 @@ class FlexOPTForCausalLM(OPTForCausalLM):
             return_dict=return_dict,
             dense_pcd_info={
                 'dense_region_tokens':batch_data_label['dense_region_tokens'] if 'dense_region_tokens' in batch_data_label else torch.zeros(1).to(inputs_embeds.device),
+                'token_instance_mask': batch_data_label['token_instance_mask']
             }
         )
 
@@ -2332,7 +2335,7 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         #     'scan_name': batch_data_label['scan_name']
         # }
         # scan_idx = batch_data_label['scan_idx'].item()
-        # op_path = f'results/attn_vis_flex/test2/{task_name}/{scan_idx}'
+        # op_path = f'results/attn_vis_flex/0423-EncoderMLP-WoVisualPrpmpt-ST128WoXYZ-OPT1_3bmWoCausalMask/10k/{task_name}/{scan_idx}'
         # if not os.path.exists(op_path):
         #     os.makedirs(op_path)
         # scan_idx = batch_data_label['scan_idx']
@@ -2536,7 +2539,8 @@ class Shell_Model(nn.Module):
                     'point_cloud_dims_max': batch_data_label['point_cloud_dims_max'][batch_id].unsqueeze(0),
                     'task_name': 'qa',
                     'scan_idx': batch_data_label['scan_idx'],
-                    'scan_name': batch_data_label['scan_name']
+                    'scan_name': batch_data_label['scan_name'],
+                    'token_instance_mask': batch_data_label['token_instance_mask'][batch_id].unsqueeze(0),
                     }
                 self.model.set_batch_data_label_cache(data_label)
                 self.model.new_episode = True

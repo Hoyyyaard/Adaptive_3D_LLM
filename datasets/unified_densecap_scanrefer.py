@@ -13,6 +13,22 @@ import open3d
 
 import utils.pc_util as pc_util
 
+def point_inside_bbox(point, bbox):
+    """
+    Check if a point is inside an axis aligned bounding box (AABB).
+
+    Parameters:
+    - point: np.array([x, y, z]), the point coordinates.
+    - bbox: tuple of two np.array, ((min_x, min_y, min_z), (max_x, max_y, max_z)),
+            representing the minimum and maximum corners of the AABB.
+
+    Returns:
+    - inside: bool, True if the point is inside the AABB, False otherwise.
+    """
+    bbox_min, bbox_max = bbox.min_bound, bbox.max_bound
+    inside = all(bbox_min[i] <= point[i] <= bbox_max[i] for i in range(3))
+    return inside
+
 
 class Dataset(ScanNetBaseDataset):
     
@@ -62,6 +78,8 @@ class Dataset(ScanNetBaseDataset):
         ## load annotations
         assert split_set in ["train", "val"]
         
+        self.err = 0
+         
         if args.special_dataset:
             print("Use User special dataset for val !!!!!")
             self.scanrefer = json.load(
@@ -295,61 +313,95 @@ class Dataset(ScanNetBaseDataset):
         ret_dict['qformer_attention_mask'] = qformer_inputs['attention_mask'][0].astype(np.float32)
         
         if self.args.finetune_flex_opt or self.args.abl_ll3da_w_openscene_token:
-            if self.args.use_ll3da_scene_token:
-                ret_dict.update(self.ll3da_fts_cache.get_ll3da_scan_datas(scan_name))
-            else:
-                openscene_ret_dict = (self.openscene_fts_cache.get_openscene_scan_datas(scan_name, preprocess=self.args.token_preprocess))
-                pcd = openscene_ret_dict['openscene_point_clouds']
-                instance_labels = openscene_ret_dict['openscene_instance_labels']
+            openscene_ret_dict = (self.openscene_fts_cache.get_openscene_scan_datas(scan_name, preprocess=self.args.token_preprocess))
+            pcd = openscene_ret_dict['openscene_point_clouds']
+            instance_labels = openscene_ret_dict['openscene_instance_labels']
+            
+            openscene_ret_dict['point_cloud_dims_min'] = pcd[..., :3].min(axis=0)
+            openscene_ret_dict['point_cloud_dims_max'] = pcd[..., :3].max(axis=0)
+            
+            ## 1 代表不mask
+            token_instance_mask = np.ones(openscene_ret_dict['scene_tokens'].shape[0]).astype(np.float32)
+            
+            click_query = np.zeros((1, 3))
+            click_mask = np.zeros((1,))
+            if self.split == 'train':
+                # if random.random() > 0.5:
+                has_instance = np.unique(openscene_ret_dict['token_instance_label'])
+                if int(self.annotations[idx]['object_id']) + 1 in has_instance:
+                    token_instance_mask[openscene_ret_dict['token_instance_label'] == int(self.annotations[idx]['object_id']) + 1] = 0
+                ### 有时候token中心可能并不在某个物体上
+                ### 这时候使用bbox来选择token
+                else:
+                    assert token_instance_mask.shape[0] == openscene_ret_dict['scene_xyz'].shape[0]
+                    tgt_idx = int(self.annotations[idx]['object_id'])
+                    tgt_pcd = pcd[instance_labels == tgt_idx + 1]
+                    o3d_pcd = open3d.geometry.PointCloud()
+                    o3d_pcd.points = open3d.utility.Vector3dVector(tgt_pcd)
+                    axis_aligned_bounding_box = o3d_pcd.get_axis_aligned_bounding_box()
+                    center = axis_aligned_bounding_box.get_center()
+                    axis_aligned_bounding_box.scale(1.5, center)
+                    for xi, xyz in enumerate(openscene_ret_dict['scene_xyz']):
+                        if point_inside_bbox(xyz, axis_aligned_bounding_box):
+                            token_instance_mask[xi] = 0
+                    ## visualization
+                    # import open3d as o3d
+                    # print(object_name)
+                    # index = np.where(token_instance_mask==0)[0]
+                    # print(index)
+                    # xyzs = [openscene_ret_dict['scene_xyz'][i] for i in index]
+                    # instrest_sphere_list = []
+                    # for xyz in xyzs:
+                    #     sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.2)  # 设置球体的半径
+                    #     sphere.translate(xyz) 
+                    #     sphere.paint_uniform_color([1,0,0])
+                    #     instrest_sphere_list.append(sphere)
+                    
+                    # vpcd = o3d.geometry.PointCloud()
+                    # vpcd.points = o3d.utility.Vector3dVector(pcd)
+                    # o3d.visualization.draw_geometries([vpcd, *instrest_sphere_list])
                 
-                openscene_ret_dict['point_cloud_dims_min'] = pcd[..., :3].min(axis=0)
-                openscene_ret_dict['point_cloud_dims_max'] = pcd[..., :3].max(axis=0)
+                if (token_instance_mask == 0).sum() > 0:
+                    ## reverse mask
+                    token_instance_mask = 1 - token_instance_mask
+                # else:
+                #     self.err+=1
+                #     print(self.err)
+                    ## aug
+                    # total_activate_token_num = 50
+                    # activate_token_num = (token_instance_mask == 1).sum()
+                    # if total_activate_token_num > activate_token_num:
+                    #     zero_index = np.where(token_instance_mask == 0)[0]
+                    #     select_zero_index = np.random.choice(zero_index, total_activate_token_num-activate_token_num, replace=False)
+                    #     token_instance_mask[select_zero_index] = 1
+                # else:
                 
-                ## 1 代表不mask
-                token_instance_mask = np.ones(openscene_ret_dict['scene_tokens'].shape[0]).astype(np.float32)
                 
-                click_query = np.zeros((1, 3))
-                click_mask = np.zeros((1,))
-                if self.split == 'train':
-                    # if random.random() > 0.5:
-                    has_instance = np.unique(openscene_ret_dict['token_instance_label'])
-                    if int(self.annotations[idx]['object_id']) + 1 in has_instance:
-                        token_instance_mask[openscene_ret_dict['token_instance_label'] == int(self.annotations[idx]['object_id']) + 1] = 0
-                    if (token_instance_mask == 0).sum() > 0:
-                        ## reverse mask
-                        token_instance_mask = 1 - token_instance_mask
-                        ## aug
-                        # total_activate_token_num = 50
-                        # activate_token_num = (token_instance_mask == 1).sum()
-                        # if total_activate_token_num > activate_token_num:
-                        #     zero_index = np.where(token_instance_mask == 0)[0]
-                        #     select_zero_index = np.random.choice(zero_index, total_activate_token_num-activate_token_num, replace=False)
-                        #     token_instance_mask[select_zero_index] = 1
-                    # else:
-                    target_obj_id = int(self.annotations[idx]['object_id'])
-                    try:
-                        object_points = pcd[instance_labels == (target_obj_id + 1)]    # npt x 3
-                        click_query[0] = random.choice(object_points)
-                        click_mask[0] = 1
-                    except Exception as e: 
-                        click_query[0] = ret_dict["gt_box_centers"][match_mask == 1].reshape(3,).astype(np.float32)
-                        click_mask[0] = 1
-                openscene_ret_dict['click_query'] = click_query.astype(np.float32)
-                openscene_ret_dict['click_mask'] = click_mask.astype(np.float32)
-                
-                openscene_ret_dict['token_instance_mask'] = token_instance_mask
-                
-                openscene_ret_dict['input_ids'] = ret_dict['input_ids']
-                openscene_ret_dict['attention_mask'] = ret_dict['attention_mask']
-                openscene_ret_dict['gradient_mask'] = ret_dict['gradient_mask']
-                
-                ## below are used for both training and evaluation
-                openscene_ret_dict['scan_idx'] = np.array(idx).astype(np.int64)
-                openscene_ret_dict['instruction'] = ret_dict['instruction']
-                openscene_ret_dict['instruction_mask'] = ret_dict['instruction_mask']
-                del openscene_ret_dict['openscene_point_clouds']
-                del openscene_ret_dict['openscene_instance_labels']
-                ret_dict = openscene_ret_dict
+                            
+                target_obj_id = int(self.annotations[idx]['object_id'])
+                try:
+                    object_points = pcd[instance_labels == (target_obj_id + 1)]    # npt x 3
+                    click_query[0] = random.choice(object_points)
+                    click_mask[0] = 1
+                except Exception as e: 
+                    click_query[0] = ret_dict["gt_box_centers"][match_mask == 1].reshape(3,).astype(np.float32)
+                    click_mask[0] = 1
+            openscene_ret_dict['click_query'] = click_query.astype(np.float32)
+            openscene_ret_dict['click_mask'] = click_mask.astype(np.float32)
+            
+            openscene_ret_dict['token_instance_mask'] = token_instance_mask
+            
+            openscene_ret_dict['input_ids'] = ret_dict['input_ids']
+            openscene_ret_dict['attention_mask'] = ret_dict['attention_mask']
+            openscene_ret_dict['gradient_mask'] = ret_dict['gradient_mask']
+            
+            ## below are used for both training and evaluation
+            openscene_ret_dict['scan_idx'] = np.array(idx).astype(np.int64)
+            openscene_ret_dict['instruction'] = ret_dict['instruction']
+            openscene_ret_dict['instruction_mask'] = ret_dict['instruction_mask']
+            del openscene_ret_dict['openscene_point_clouds']
+            del openscene_ret_dict['openscene_instance_labels']
+            ret_dict = openscene_ret_dict
         ret_dict['scan_name'] = scan_name
         
         return ret_dict

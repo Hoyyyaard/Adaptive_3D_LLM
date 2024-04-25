@@ -51,7 +51,7 @@
             }
         },
         {
-            "name": "eval object caption",
+            "name": "LL3DA Eval ScanQA",
             "type": "python",
             "request": "launch",
             "program": "main.py",
@@ -65,7 +65,7 @@
                 "--captioner", "ll3da",
                 "--checkpoint_dir", "./ckpts/opt-1.3b/ll3da-scannet",
                 "--test_ckpt", "./ckpts/opt-1.3b/ll3da-scannet/checkpoint_best.pth",
-                "--dataset", "unified_object_caption",
+                "--dataset", "unified_scanqa",
                 "--vocab", "facebook/opt-1.3b",
                 "--qformer_vocab", "bert-base-embedding",
                 "--dist_url", "tcp://localhost:12345",
@@ -81,8 +81,8 @@
                 "--log_dir", "results/debug",
                 "--adaptive_pcd_input",
                 "--cache_dir","results/debug",
-                "--caption_box_query"
-                // "--special_dataset","results/size_filter_scannet_qa_datasets/val_size_s_1e-2_num180.json"
+                "--num_finetune_hidden_layers","0",
+                "--openscene_cache_dir","results"
 
             ],
             "env": {
@@ -481,9 +481,9 @@
                 "--use_normal",
                 "--detector", "detector_Vote2Cap_DETR",
                 "--captioner", "ll3da",
-                "--test_ckpt", "ckpts/opt-1.3b/test/checkpoint.pth",
+                "--test_ckpt", "ckpts/opt-1.3b/nipus_exp/0424-EncoderMLP-ST256WoXYZ-OPT1_3b-WoDistMask-WoTokenMask/checkpoint_10k.pth",
                 "--dataset", "unified_scanqa",
-                "--vocab", "ckpts/opt-125m",
+                "--vocab", "ckpts/opt-model",
                 "--qformer_vocab", "bert-base-embedding",
                 "--dist_url", "tcp://localhost:12345",
                 "--batchsize_per_gpu", "1",
@@ -495,12 +495,12 @@
                 "--test_only",
                 "--finetune_flex_opt",
                 "--finetune_opt1_3b",
-                "--openscene_cache_dir","/mnt/nfs/share/Adaptive/0420_openscene_scene_tokens_axis_align_w_pcd_info_s_512_0.2_128"
+                "--openscene_cache_dir","/mnt/nfs/share/Adaptive/0424_openscene_scene_tokens_axis_align_w_pcd_info_w_token_instance_label_s_256_0.2_256"
 
             ],
             "env": {
                 "PYTHONWARNINGS":"ignore:semaphore_tracker:UserWarning",
-                "CUDA_VISIBLE_DEVICES":"0",
+                "CUDA_VISIBLE_DEVICES":"0,1,2,3,4,5,6,7",
                 "MKL_NUM_THREADS":"1",
                 "NUMEXPR_NUM_THREADS":"1",
                 "OMP_NUM_THREADS":"1",

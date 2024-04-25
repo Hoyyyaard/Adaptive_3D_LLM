@@ -17,16 +17,16 @@ python main.py \
     --vocab ckpts/opt-model \
     --qformer_vocab bert-base-embedding \
     --pretrained_weights ckpts/opt-model/pytorch_model.bin \
-    --checkpoint_dir ckpts/opt-1.3b/nipus_exp/0423-EncoderMLP-WoVisualPrpmpt-ST128WoXYZ-OPT1_3bmWoCausalMask\
+    --checkpoint_dir ckpts/opt-1.3b/nipus_exp/0425-EncoderMLP-ST256WoXYZ-OPT1_3b4Layer-WoDistMask-WoTokenMask\
     --max_epoch 32 \
     --max_des_len 512 \
     --dataset_num_workers 4 \
     --finetune_flex_opt \
     --dist_url tcp://localhost:12445 \
-    --save_every 10000 \
-    --batchsize_per_gpu 4 --ngpus 8 --base_lr 1e-3 --final_lr 1e-5 \
+    --save_every 5000 \
+    --batchsize_per_gpu 4 --ngpus 7 --base_lr 1e-3 --final_lr 1e-5 \
     --cache_dir results/debug \
-    --finetune_opt1_3b \
-    --num_finetune_hidden_layers 0 \
-    --openscene_cache_dir /mnt/nfs/share/Adaptive/0423_openscene_scene_tokens_axis_align_w_pcd_info_w_token_instance_label_s_128_0.4_512 \
-    --gradient_checkpoint \
+    --only_finetune_self_attn \
+    --num_finetune_hidden_layers 4 \
+    --openscene_cache_dir /mnt/nfs/share/Adaptive/0424_openscene_scene_tokens_axis_align_w_pcd_info_w_token_instance_label_s_256_0.2_256  \
+    --token_instance_mask \

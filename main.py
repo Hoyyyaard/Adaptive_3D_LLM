@@ -152,7 +152,8 @@ def make_args_parser():
     parser.add_argument("--abl_ll3da_w_openscene_token", action='store_true')
     
     parser.add_argument("--openscene_cache_dir", required=True)
-    parser.add_argument("--token_instance_mask", required=True)
+    parser.add_argument("--token_instance_mask", action='store_true')
+    parser.add_argument("--scene_token_num", default=256)
     
     
     args = parser.parse_args()
@@ -182,6 +183,8 @@ def make_args_parser():
     print(f'finetune_opt1_3b: ', args.finetune_opt1_3b)
     print(f'll3da_token_preprocess: ', args.ll3da_token_preprocess)
     print(f'abl_ll3da_w_openscene_token: ', args.abl_ll3da_w_openscene_token)
+    print(f'token_instance_mask: ', args.token_instance_mask)
+    print(f'scene_token_num: ', args.scene_token_num)
     if args.token_instance_mask:
         os.environ['token_instance_mask'] = 'True'
     return args
@@ -443,6 +446,7 @@ def finetune_flex_opt_main(local_rank, args):
     ## 这里代码有bug 由于代码上的bug 第一层的flex self attn相当于self attn
     config.num_finetune_hidden_layers = args.num_finetune_hidden_layers + 1
     config.num_hidden_layers = config.num_hidden_layers - args.num_finetune_hidden_layers - 1
+    config.scene_token_num = args.scene_token_num
     print("acc_num_flex_hidden_layers: ", config.num_finetune_hidden_layers)
     print("acc_num_hidden_layers: ", config.num_hidden_layers)
     if args.freeze_flex_llm or args.finetune_opt1_3b:
@@ -546,7 +550,7 @@ def finetune_flex_opt_main(local_rank, args):
                         layer_idx = int(find_key.split('.')[-1])-config.num_hidden_layers
                         flex_checkpoint[k.replace(find_key, f'model.decoder.flex_layers.{layer_idx}')] = v
                         flex_checkpoint.pop(k)
-                # checkpoint = flex_checkpoint
+                checkpoint = flex_checkpoint
                 
                 ## 
                 # zero_init_ckpt = {}
