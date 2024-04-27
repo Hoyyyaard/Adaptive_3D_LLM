@@ -146,8 +146,6 @@ def make_args_parser():
     ## fully finetune opt1.3b in stage 1
     parser.add_argument("--finetune_opt1_3b", action='store_true')
     
-    parser.add_argument("--ll3da_token_preprocess", action='store_true')
-    
     ## use openscene token instead of ll3da scene token for ll3da
     parser.add_argument("--abl_ll3da_w_openscene_token", action='store_true')
     
@@ -155,10 +153,12 @@ def make_args_parser():
     parser.add_argument("--token_instance_mask", action='store_true')
     parser.add_argument("--scene_token_num", default=256)
     
-    
-    ## LL3DA OPT Attention 输出
+    ## LL3DA OPT ATTENTION 输出
     parser.add_argument("--ll3da_opt_attn_output", action='store_true')
-    
+    ## 用于FLEX-LL3DA
+    parser.add_argument("--use_flex_attn", action='store_true')    
+    ## 用于预处理LL3DA的detector输入和DENSE TOKEN
+    parser.add_argument("--ll3da_token_preprocess", action='store_true')
     
     args = parser.parse_args()
     args.use_height = not args.no_height
@@ -185,16 +185,22 @@ def make_args_parser():
     print(f'finetune_flex_self_attn: ', args.finetune_flex_self_attn)
     print(f'only_finetune_flex_attn: ', args.only_finetune_flex_attn)
     print(f'finetune_opt1_3b: ', args.finetune_opt1_3b)
-    print(f'll3da_token_preprocess: ', args.ll3da_token_preprocess)
     print(f'abl_ll3da_w_openscene_token: ', args.abl_ll3da_w_openscene_token)
     print(f'token_instance_mask: ', args.token_instance_mask)
     print(f'scene_token_num: ', args.scene_token_num)
-    print(f'll3da_opt_attn_output: ', args.ll3da_opt_attn_output)
     if args.token_instance_mask:
         os.environ['token_instance_mask'] = 'True'
-    
+        
+    print('============== FLEX-LL3DA =====================')
+    print(f'll3da_opt_attn_output: ', args.ll3da_opt_attn_output)
+    print(f'use_flex_attn: ', args.use_flex_attn)
+    print(f'll3da_token_preprocess: ', args.ll3da_token_preprocess)
     if args.ll3da_opt_attn_output:
         os.environ['ll3da_opt_attn_output'] = 'True'
+    if args.use_flex_attn:
+        os.environ['use_flex_attn'] = 'True'
+    if args.ll3da_token_preprocess:
+        os.environ['ll3da_token_preprocess'] = 'True'
     return args
 
 

@@ -2,10 +2,12 @@ from typing import List, Optional, Tuple, Union
 import copy
 import os
 import torch
+import math
 import sys
 sys.path.append('/home/admin/Projects/LL3DA/')
 import heapq, time
 from torch import Tensor
+import numpy as np
 from typing import Callable
 from collections import OrderedDict
 import torch.nn.functional as F
@@ -495,6 +497,224 @@ OPT_ATTENTION_CLASSES = {
 }
 
 
+from models.detector_Vote2Cap_DETR.config import model_config_flex
+
+class DenseTokenSelection(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self._query_topk = 4
+        self._scene_token_topk = 1
+        
+        self._sample_nearest_pcd_radius = 0.4
+        self._sample_nearest_pcd_npoint = 1024
+        
+        self._dense_pcd_dir = 'data/scannet/scannet_data_dense'
+        
+        self._preenc_npoints = 5
+        cfg = model_config_flex(self._preenc_npoints)
+        self.tokenizer = self._build_preencoder(cfg)
+        self.encoder = self._build_encoder(cfg)
+        self.tokenizer = self.tokenizer.to(torch.float32)
+        self.encoder = self.encoder.to(torch.float32)
+    
+    def _build_preencoder(self, cfg):
+        mlp_dims = [cfg.in_channel, 64, 128, cfg.enc_dim]
+        preencoder = PointnetSAModuleVotes(
+            radius=0.2,
+            nsample=256,
+            npoint=cfg.preenc_npoints,
+            mlp=mlp_dims,
+            normalize_xyz=True,
+        )
+        return preencoder
+        
+    def _build_encoder(self, cfg):
+        if cfg.enc_type == "vanilla":
+            encoder_layer = TransformerEncoderLayer(
+                d_model=cfg.enc_dim,
+                nhead=cfg.enc_nhead,
+                dim_feedforward=cfg.enc_ffn_dim,
+                dropout=cfg.enc_dropout,
+                activation=cfg.enc_activation,
+            )
+            encoder = TransformerEncoder(
+                encoder_layer=encoder_layer, num_layers=cfg.enc_nlayers
+            )
+        elif cfg.enc_type in ["masked"]:
+            encoder_layer = TransformerEncoderLayer(
+                d_model=cfg.enc_dim,
+                nhead=cfg.enc_nhead,
+                dim_feedforward=cfg.enc_ffn_dim,
+                dropout=cfg.enc_dropout,
+                activation=cfg.enc_activation,
+            )
+            interim_downsampling = PointnetSAModuleVotes(
+                radius=0.2,
+                nsample=256,
+                npoint=cfg.preenc_npoints,
+                mlp=[cfg.enc_dim, 256, 256, cfg.enc_dim],
+                normalize_xyz=True,
+            )
+            
+            masking_radius = [math.pow(x, 2) for x in [0.4, 0.8, 1.2]]
+            encoder = MaskedTransformerEncoder(
+                encoder_layer=encoder_layer,
+                num_layers=3,
+                interim_downsampling=interim_downsampling,
+                masking_radius=masking_radius,
+            )
+        else:
+            raise ValueError(f"Unknown encoder type {cfg.enc_type}")
+        return encoder
+    
+    def _retrive_topk_query_from_text(self, opt_attn_map):
+        '''
+        opt_attn_map : [BS, HEAD, SEQ_LEN, SEQ_LEN]
+        '''
+        ## MEAN IN HEAD
+        opt_attn_map = torch.mean(opt_attn_map, dim=1)
+        ## FILTER 32 LEARNABLE QUERY IN ROW
+        opt_attn_map = opt_attn_map[:, 32:, :]
+        ## FILTER TEXT IN COLUMN
+        opt_attn_map = opt_attn_map[:, :, :32]
+        ## 取TOPK的query
+        ## [BSZ, TEXT_SEQ_LEN, TOPK]
+        _, argmax_idx = opt_attn_map.float().topk(k=self._query_topk, dim=-1)
+        
+        return argmax_idx
+        
+            
+    def _retrive_topk_scene_token_from_query(self, qformer_attn_map, qformer_scene_token_xyz, batch_topk_query):
+        ## DROP VISUAL PROMPT
+        qformer_attn_map = qformer_attn_map[:, :, :, :32,  :]
+        ## MEAN IN HEAD
+        qformer_attn_map = torch.mean(qformer_attn_map, dim=2)
+        ## MEAN IN LAYER
+        qformer_attn_map = torch.mean(qformer_attn_map, dim=1)
+        ## [BSZ, 32, TOPK]
+        _, argmax_idx = qformer_attn_map.float().topk(k=self._scene_token_topk, dim=-1)
+        
+        ## 选出相似度最高的几个SCENE TOKEN
+        argmax_idx = argmax_idx.squeeze(-1)
+        idx = argmax_idx.unsqueeze(1).repeat(1, batch_topk_query.shape[1], 1)
+        batch_select_scene_token_ind = torch.gather(idx, -1, batch_topk_query)
+        
+        batch_select_scene_token_ind = batch_select_scene_token_ind.unsqueeze(-1).repeat(1, 1, 1, qformer_scene_token_xyz.shape[-1])
+        batch_select_scene_token_xyz = torch.gather(qformer_scene_token_xyz.unsqueeze(1).repeat(1, batch_topk_query.shape[1], 1, 3), -2, batch_select_scene_token_ind)
+        
+        return batch_select_scene_token_xyz
+
+    
+    def _get_batch_scan_dense_pcd(self, batch_scan_name):
+        batch_pcd = []
+        for scan_name in batch_scan_name:
+            mesh_vertices = np.load(os.path.join(self._dense_pcd_dir, scan_name) + "_aligned_vert.npy")
+            point_cloud = mesh_vertices[:, 0:6]
+            
+            point_cloud[:, 3:] = (point_cloud[:, 3:] - np.array([109.8, 97.2, 83.8])) / 256.0
+            
+            normals = mesh_vertices[:,6:9]
+            point_cloud = np.concatenate([point_cloud, normals], 1)
+            
+            floor_height = np.percentile(point_cloud[:, 2], 0.99)
+            height = point_cloud[:, 2] - floor_height
+            point_cloud = np.concatenate([point_cloud, np.expand_dims(height, 1)], 1)
+            
+            pcd = torch.FloatTensor(point_cloud).cuda().half()
+            batch_pcd.append(pcd)
+            
+        return batch_pcd
+
+    def _break_up_pc(self, pc):
+        # pc may contain color/normals.
+        xyz = pc[..., 0:3].contiguous()
+        features = pc[..., 3:].transpose(1, 2).contiguous() if pc.size(-1) > 3 else None
+        return xyz, features
+    
+    def _run_encoder(self, point_clouds, inds=None):
+        xyz, features = self._break_up_pc(point_clouds)
+        
+        ## pointcloud tokenization
+        # xyz: batch x npoints x 3
+        # features: batch x channel x npoints
+        # inds: batch x npoints
+        pre_enc_xyz, pre_enc_features, pre_enc_inds = self.tokenizer(xyz, features, inds)
+
+        # nn.MultiHeadAttention in encoder expects npoints x batch x channel features
+        pre_enc_features = pre_enc_features.permute(2, 0, 1)
+
+        # xyz points are in batch x npointx channel order
+        enc_xyz, enc_features, enc_inds = self.encoder(
+            pre_enc_features, xyz=pre_enc_xyz
+        )
+        if enc_inds is None:
+            # encoder does not perform any downsampling
+            enc_inds = pre_enc_inds
+        else:
+            # use gather here to ensure that it works for both FPS and random sampling
+            enc_inds = torch.gather(pre_enc_inds, 1, enc_inds.long())
+        return enc_features
+    
+    def _sample_nearest_point_from_xyz(self, batch_scene_xyz, batch_sample_xyz):
+        
+        batch_sample_pcd = []
+        for scene_xyz, sample_xyz in zip(batch_scene_xyz, batch_sample_xyz):
+            ## scene_xyz [N, 3] sample_xyz [SEQ_LEN, TOPK, 3]
+            scene_fts = scene_xyz[..., 3:].unsqueeze(0)
+            scene_xyz = scene_xyz[..., :3].unsqueeze(0)
+            seq_len, topk, _ = sample_xyz.shape
+            sample_xyz = sample_xyz.view(-1, 3).unsqueeze(0).float()
+            idx = ball_query(
+                    self._sample_nearest_pcd_radius, 
+                    self._sample_nearest_pcd_npoint, 
+                    scene_xyz.float().contiguous(), 
+                    sample_xyz.float().contiguous()
+                    ).long().squeeze(0)
+            
+            # idx = idx.view(1, seq_len, topk, self._sample_nearest_pcd_npoint)
+            
+            ## 均匀采样
+            # unique_cnt = torch.zeros((idx.shape[0], idx.shape[1]))
+            # for i_batch in range(idx.shape[0]):
+            #     for i_region in range(idx.shape[1]):
+            #         unique_ind = torch.unique(idx[i_batch, i_region, :])
+            #         num_unique = unique_ind.shape[0]
+            #         unique_cnt[i_batch, i_region] = num_unique
+            #         sample_ind = torch.randint(0, num_unique, (self._sample_nearest_pcd_npoint - num_unique,), dtype=torch.long)
+            #         all_ind = torch.cat((unique_ind, unique_ind[sample_ind]))
+            #         idx[i_batch, i_region, :] = all_ind
+            # idx.squeeze_(1)
+            
+            sample_xyz = torch.gather(scene_xyz.repeat(idx.shape[0], 1, 1), 1, idx.unsqueeze(-1).repeat(1, 1, scene_xyz.shape[-1]))
+            sample_fts = torch.gather(scene_fts.repeat(idx.shape[0], 1, 1), 1, idx.unsqueeze(-1).repeat(1, 1, scene_fts.shape[-1]))
+
+            sample_xyz = sample_xyz.view(seq_len, -1, self._sample_nearest_pcd_npoint, sample_xyz.shape[-1])
+            sample_fts = sample_fts.view(seq_len, -1, self._sample_nearest_pcd_npoint, sample_fts.shape[-1])
+            sample_pcd = torch.cat((sample_xyz, sample_fts), -1)
+            batch_sample_pcd.append(sample_pcd)
+        
+        ## [BSZ, SEQ_LEN, TOPK, NPOINT, 10]
+        batch_sample_pcd = torch.stack(batch_sample_pcd, 0)
+        
+        return batch_sample_pcd
+    
+    @torch.no_grad()
+    def forward(self, opt_attn_map, qformer_attn_map, qformer_scene_token_xyz, scan_name):
+        batch_pcd = self._get_batch_scan_dense_pcd(scan_name)
+        ## [BSZ, TEXT_SEQ_LEN, TOPK]
+        batch_topk_query = self._retrive_topk_query_from_text(opt_attn_map)
+        batch_topk_select_scene_token_xyz = self._retrive_topk_scene_token_from_query(qformer_attn_map, qformer_scene_token_xyz, batch_topk_query)
+        batch_sample_pcd = self._sample_nearest_point_from_xyz(batch_pcd, batch_topk_select_scene_token_xyz)
+        bsz, seq_len, topk, npoint, ft_dim = batch_sample_pcd.shape
+        batch_sample_pcd = batch_sample_pcd.view(bsz*seq_len*topk, npoint, ft_dim).contiguous()
+        enc_features = self._run_encoder(batch_sample_pcd.float())
+        enc_features = enc_features.half().permute(1, 0, 2)
+        enc_features = enc_features.view(bsz, seq_len, topk, enc_features.shape[-2], enc_features.shape[-1]).contiguous()
+        # enc_xyz = enc_xyz.view(bsz, seq_len, topk, enc_xyz.shape[-2], enc_xyz.shape[-1]).contiguous()
+        # enc_inds = enc_inds.view(bsz, seq_len, topk, enc_inds.shape[-1]).contiguous()
+        torch.cuda.empty_cache()
+        return enc_features
+
 class OPTDecoderLayer(nn.Module):
     def __init__(self, config: OPTConfig):
         super().__init__()
@@ -512,7 +732,8 @@ class OPTDecoderLayer(nn.Module):
         self.fc1 = nn.Linear(self.embed_dim, config.ffn_dim, bias=config.enable_bias)
         self.fc2 = nn.Linear(config.ffn_dim, self.embed_dim, bias=config.enable_bias)
         self.final_layer_norm = nn.LayerNorm(self.embed_dim, elementwise_affine=config.layer_norm_elementwise_affine)
-
+        
+        
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -521,6 +742,7 @@ class OPTDecoderLayer(nn.Module):
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
+        reg_features = None
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -552,6 +774,7 @@ class OPTDecoderLayer(nn.Module):
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
         )
+        
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
 
@@ -587,6 +810,7 @@ class OPTDecoderLayer(nn.Module):
 
         if use_cache:
             outputs += (present_key_value,)
+    
 
         return outputs
 
@@ -738,6 +962,9 @@ class OPTDecoder(OPTPreTrainedModel):
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
         self.post_init()
+        
+        if os.getenv('use_flex_attn') == 'True':
+            self.dense_token_selection = DenseTokenSelection()
 
     def get_input_embeddings(self):
         return self.embed_tokens
@@ -756,6 +983,7 @@ class OPTDecoder(OPTPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        flex_attn_info = None
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         r"""
         Args:
@@ -881,6 +1109,8 @@ class OPTDecoder(OPTPreTrainedModel):
                         f" {head_mask.size()[0]}."
                     )
 
+        reg_features = None
+        
         for idx, decoder_layer in enumerate(self.layers):
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
             if output_hidden_states:
@@ -902,6 +1132,7 @@ class OPTDecoder(OPTPreTrainedModel):
                     None,
                     output_attentions,
                     use_cache,
+                    reg_features
                 )
             else:
                 layer_outputs = decoder_layer(
@@ -911,10 +1142,21 @@ class OPTDecoder(OPTPreTrainedModel):
                     past_key_value=past_key_value,
                     output_attentions=output_attentions,
                     use_cache=use_cache,
+                    reg_features=reg_features
                 )
 
             hidden_states = layer_outputs[0]
 
+            ## TODO：LAYER IDX判断
+            if os.getenv('use_flex_attn') == 'True':
+                reg_features = self.dense_token_selection(
+                                        opt_attn_map = layer_outputs[1], 
+                                        qformer_attn_map = flex_attn_info['qformer_batch_x_attn'],
+                                        qformer_scene_token_xyz = flex_attn_info['qformer_scene_token_xyz'],
+                                        scan_name = flex_attn_info['scan_name'],
+                                        )
+            
+            
             if use_cache:
                 next_decoder_cache += (layer_outputs[2 if output_attentions else 1],)
 
@@ -980,6 +1222,7 @@ class OPTModel(OPTPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        flex_attn_info = None
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -999,6 +1242,7 @@ class OPTModel(OPTPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            flex_attn_info=flex_attn_info
         )
 
         if not return_dict:
@@ -1056,6 +1300,7 @@ class OPTForCausalLM(OPTPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        flex_attn_info = None
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         r"""
         Args:
@@ -1148,6 +1393,7 @@ class OPTForCausalLM(OPTPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            flex_attn_info=flex_attn_info
         )
 
         logits = self.lm_head(outputs[0]).contiguous()

@@ -234,6 +234,7 @@ class captioner(nn.Module):
             'num_beams': 4 if args.use_beam_search is True else None,
         }
         self.train()
+
     
     
     def _get_instruction_response(self, 
@@ -283,6 +284,16 @@ class captioner(nn.Module):
         query_outputs_latent = query_outputs[0][:, : self.nlatent_query, :]
         prefix_feature = self.qformer_to_language_projection(query_outputs_latent)
         
+        ## 输出CROSS-ATTENTION
+        batch_x_attn = []
+        for bsz in range(prefix_feature.shape[0]):
+            tmp_x_attn = []
+            for la in query_outputs['cross_attentions']:
+                tmp_x_attn.append(la[bsz, ...])
+            tmp_x_attn = torch.stack(tmp_x_attn, dim=0)
+            batch_x_attn.append(tmp_x_attn)
+        batch_x_attn = torch.stack(batch_x_attn, dim=0)
+        
         ## save x-attn here
         if os.getenv("ll3da_opt_attn_output", 'False') == 'True':
             assert detector_output['enc_xyz'].shape[0] == 1
@@ -298,7 +309,7 @@ class captioner(nn.Module):
             os.makedirs(f'{op_path}/{scan_idx.item()}', exist_ok=True)
             torch.save(attn_dict, f'{op_path}/{scan_idx.item()}/qformer_attn.pt')
         
-        return prefix_feature
+        return prefix_feature, (batch_x_attn, detector_output['enc_xyz'])
         
     
     def forward(self, detector_output: dict, inputs: dict, is_eval: bool=False, task_name: str='qa') -> dict:
@@ -342,7 +353,7 @@ class captioner(nn.Module):
         embedding_layer = self.transformer.get_input_embeddings()
         
         # ---- batch x ntoken x n_embd
-        prefix_tokens = self._get_instruction_response(
+        prefix_tokens, qformer_batch_x_attn = self._get_instruction_response(
             detector_output=detector_output, 
             inputs=inputs, 
             box_query=box_query,
@@ -355,10 +366,19 @@ class captioner(nn.Module):
         inputs_embeds = torch.cat((prefix_tokens, embedding_layer(input_ids)), dim=1)
         attention_mask = torch.cat((prefix_mask, input_mask), dim=1)
         
+        ## 为FLEX-ATTN准备信息
+        flex_attn_info = {
+            'qformer_batch_x_attn': qformer_batch_x_attn[0].to(self.dtype),
+            'qformer_scene_token_xyz': qformer_batch_x_attn[1].to(self.dtype),
+            'scan_name': inputs['scan_name'],
+        }
+        
         # ---- calculate transformer loss
         outputs = self.transformer(
             inputs_embeds=inputs_embeds.to(self.dtype),
             attention_mask=attention_mask.to(self.dtype),
+            output_attentions=True,
+            flex_attn_info=flex_attn_info
         )
         
         detector_output['loss'] += self.loss_caption(
@@ -409,7 +429,7 @@ class captioner(nn.Module):
             if task_name == 'ov-det':
                 click_query=detector_output['query_xyz'][:, [proposal_id]]  # batch x 1 x 3
             
-            instruct_prefix_feature=self._get_instruction_response(     # batch x ntoken x n_embd
+            instruct_prefix_feature, _=self._get_instruction_response(     # batch x ntoken x n_embd
                 detector_output=detector_output,
                 inputs=inputs,
                 box_query=box_query,        # batch x 1 x 8 x 3
@@ -457,7 +477,7 @@ class captioner(nn.Module):
         instruction = inputs['instruction']             # ntoken
         instruction_mask = inputs['instruction_mask']   # ntoken
 
-        prefix_tokens = self._get_instruction_response(
+        prefix_tokens, batch_x_attn = self._get_instruction_response(
             detector_output=detector_output,
             inputs=inputs,
         )
@@ -502,7 +522,7 @@ class captioner(nn.Module):
         instruction = inputs['instruction']             # ntoken
         instruction_mask = inputs['instruction_mask']   # ntoken
 
-        prefix_tokens = self._get_instruction_response(
+        prefix_tokens, batch_x_attn = self._get_instruction_response(
             detector_output=detector_output,
             inputs=inputs,
         )
@@ -607,7 +627,7 @@ class captioner(nn.Module):
         box_query = inputs['box_query']
         click_query = inputs['click_query']
 
-        prefix_tokens = self._get_instruction_response(
+        prefix_tokens, _ = self._get_instruction_response(
             detector_output=detector_output,
             inputs=inputs,
             box_query=box_query,
