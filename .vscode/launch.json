@@ -80,7 +80,6 @@
                 "--log_dir", "results/debug",
                 "--cache_dir","results/debug",
                 "--num_finetune_hidden_layers","0",
-                "--openscene_cache_dir","results",
                 // "--ll3da_opt_attn_output"
 
             ],

@@ -174,7 +174,7 @@ class captioner(nn.Module):
                 param.requires_grad = False
         return self
     
-    def __init__(self, args, train_dataset):
+    def __init__(self, args, train_dataset, config):
         super(captioner, self).__init__()
         
         self.encoder_hidden_size = 256
@@ -188,12 +188,13 @@ class captioner(nn.Module):
         self.nvocabs = len(self.tokenizer)
         
         ## caption generation cores
-        # from src.modeling_opt_flex import FlexOPTForCausalLM
-        # self.transformer = AutoModelForCausalLM.from_pretrained('ckpts/opt-model')
-        self.transformer = AutoModelForCausalLM.from_pretrained(
-            args.vocab,
-            torch_dtype=self.dtype,
-        )
+        from src.modeling_opt_flex import OPTForCausalLM
+        self.transformer = OPTForCausalLM.from_pretrained('ckpts/opt-model', config=config, torch_dtype=self.dtype)
+        # self.transformer = AutoModelForCausalLM.from_pretrained(
+        #     args.vocab,
+        #     torch_dtype=self.dtype,
+        # )
+        
         self.n_embd = self.transformer.config.hidden_size
         
         ## Multi-modality Transformer

@@ -151,7 +151,7 @@ def make_args_parser():
     ## use openscene token instead of ll3da scene token for ll3da
     parser.add_argument("--abl_ll3da_w_openscene_token", action='store_true')
     
-    parser.add_argument("--openscene_cache_dir", required=True)
+    parser.add_argument("--openscene_cache_dir")
     parser.add_argument("--token_instance_mask", action='store_true')
     parser.add_argument("--scene_token_num", default=256)
     
@@ -309,7 +309,8 @@ def main(local_rank, args):
     
     ### build datasets and dataloaders
     dataset_config, datasets, dataloaders = build_dataset(args)
-    model = CaptionNet(args, dataset_config, datasets['train'])
+    config = AutoConfig.from_pretrained('ckpts/opt-model/config.json')
+    model = CaptionNet(args, dataset_config, datasets['train'], config)
     
     # testing phase
     if args.test_only:
