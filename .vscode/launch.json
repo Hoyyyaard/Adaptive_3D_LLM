@@ -51,7 +51,7 @@
             }
         },
         {
-            "name": "LL3DA Eval ScanQA",
+            "name": "LL3DA Eval ScanQA Vis Attention",
             "type": "python",
             "request": "launch",
             "program": "main.py",
@@ -63,8 +63,7 @@
                 "--use_normal",
                 "--detector", "detector_Vote2Cap_DETR",
                 "--captioner", "ll3da",
-                "--checkpoint_dir", "./ckpts/opt-1.3b/ll3da-scannet",
-                "--test_ckpt", "./ckpts/opt-1.3b/ll3da-scannet/checkpoint_best.pth",
+                "--test_ckpt", "ckpts/ll3da/ll3da-opt-1.3b.pth",
                 "--dataset", "unified_scanqa",
                 "--vocab", "facebook/opt-1.3b",
                 "--qformer_vocab", "bert-base-embedding",
@@ -72,22 +71,23 @@
                 "--criterion", "CiDEr",
                 "--freeze_detector",
                 "--freeze_llm",
-                "--batchsize_per_gpu", "1",
-                "--ngpus", "1",
+                "--batchsize_per_gpu", "6",
+                "--ngpus", "8",
+                "--use_beam_search",
                 "--max_des_len", "256",
                 "--max_prompt", "1",
-                "--use_beam_search",
                 "--test_only",
                 "--log_dir", "results/debug",
-                "--adaptive_pcd_input",
                 "--cache_dir","results/debug",
                 "--num_finetune_hidden_layers","0",
-                "--openscene_cache_dir","results"
+                "--openscene_cache_dir","results",
+                // "--ll3da_opt_attn_output"
 
             ],
             "env": {
+                "LL3DA_ATTN_OP_DIR" : "results/ll3da_attn_op/official",
                 "PYTHONWARNINGS":"ignore:semaphore_tracker:UserWarning",
-                "CUDA_VISIBLE_DEVICES":"7",
+                "CUDA_VISIBLE_DEVICES":"0,1,2,3,4,5,6,7",
                 "MKL_NUM_THREADS":"1",
                 "NUMEXPR_NUM_THREADS":"1",
                 "OMP_NUM_THREADS":"1",
@@ -449,8 +449,8 @@
                 "--vocab", "facebook/opt-1.3b",
                 "--qformer_vocab", "bert-base-embedding",
                 "--dist_url", "tcp://localhost:12345",
-                "--batchsize_per_gpu", "1",
-                "--ngpus", "1",
+                "--batchsize_per_gpu", "4",
+                "--ngpus", "8",
                 "--use_beam_search",
                 "--log_dir", "results/debug",
                 "--cache_dir","results/debug",
@@ -461,7 +461,7 @@
             ],
             "env": {
                 "PYTHONWARNINGS":"ignore:semaphore_tracker:UserWarning",
-                "CUDA_VISIBLE_DEVICES":"0",
+                "CUDA_VISIBLE_DEVICES":"0,1,2,3,4,5,6,7",
                 "MKL_NUM_THREADS":"1",
                 "NUMEXPR_NUM_THREADS":"1",
                 "OMP_NUM_THREADS":"1",
@@ -549,7 +549,7 @@
             "name": "vis encoder fts",
             "type": "python",
             "request": "launch",
-            "program": "src/visualization_flex_attn.py",
+            "program": "src/visualization_ll3da_opt_attn.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "python": "/home/admin/micromamba/envs/ll3da/bin/python",
@@ -562,7 +562,7 @@
                 "MKL_NUM_THREADS":"1",
                 "NUMEXPR_NUM_THREADS":"1",
                 "OMP_NUM_THREADS":"1",
-                "DISPLAY":"localhost:14.0"
+                "DISPLAY":"localhost:12.0"
             }
         },
         {

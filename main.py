@@ -156,6 +156,10 @@ def make_args_parser():
     parser.add_argument("--scene_token_num", default=256)
     
     
+    ## LL3DA OPT Attention 输出
+    parser.add_argument("--ll3da_opt_attn_output", action='store_true')
+    
+    
     args = parser.parse_args()
     args.use_height = not args.no_height
     
@@ -185,8 +189,12 @@ def make_args_parser():
     print(f'abl_ll3da_w_openscene_token: ', args.abl_ll3da_w_openscene_token)
     print(f'token_instance_mask: ', args.token_instance_mask)
     print(f'scene_token_num: ', args.scene_token_num)
+    print(f'll3da_opt_attn_output: ', args.ll3da_opt_attn_output)
     if args.token_instance_mask:
         os.environ['token_instance_mask'] = 'True'
+    
+    if args.ll3da_opt_attn_output:
+        os.environ['ll3da_opt_attn_output'] = 'True'
     return args
 
 

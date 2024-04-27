@@ -7,9 +7,10 @@ import random
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from sklearn.neighbors import BallTree
+
+attn_dir = 'results/ll3da_attn_op/official'
 from transformers import AutoTokenizer
 
-tokenizer = AutoTokenizer.from_pretrained('ckpts/opt-model')
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -39,23 +40,16 @@ def plot_attention_map(attention_weights):
     #                  horizontalalignment='center', verticalalignment='center',
     #                  color='black', fontsize=10)
     
-    plt.xlabel("scene token")
-    plt.ylabel("learnable query")
+    plt.xlabel("learnable query")
+    plt.ylabel("text token")
     # plt.title("Attention Map with Activation Values")
     plt.colorbar()
     plt.show()
 
-attn_dir = 'results/attn_vis_qformer/ll3da/best/qa'
-exp_dir = 'results/toy_exp/scanqa/official/qa_pred_gt_val.json'
 
 
-new_qa_pred_gt = {}
-with open(exp_dir, 'r') as f:
-    qa_pred_gt = json.load(f)
-for k,v in qa_pred_gt.items():
-    question_id = k.split('-')[0] + '-' + k.split('-')[1] + '-' + k.split('-')[2]
-    new_qa_pred_gt[question_id] = v
 
+tokenizer = AutoTokenizer.from_pretrained('ckpts/opt-model')
 
 def _get_scan_data(scan_name,):
     data_path = 'data/scannet/scannet_data_dense'
@@ -88,35 +82,31 @@ def _get_scan_data(scan_name,):
     return ret_dict
 
 
-## load annotation
-anno = list(json.load(open('data/ScanQA/ScanQA_v1.0_val.json','r')))
-
 attn_p_list = os.listdir(attn_dir)
-attn_p_list.sort(key=lambda x: int(x.split('.')[0]))
+attn_p_list.sort(key = lambda x: int(x))
+from collections import Counter
+scene_counter = Counter()
+
 # random.shuffle(attn_p_list)
 
 for qformer_x_attns_p in tqdm(attn_p_list[::5]):
-    attn_infos = torch.load(os.path.join(attn_dir, qformer_x_attns_p), map_location='cpu')
-    anno_info = anno[int(qformer_x_attns_p.split('.')[0])]
-    scene_id = anno_info['scene_id']
-    scan_name = attn_infos['scan_name'][0]
-    assert anno_info['scene_id'] == scan_name, f'{scene_id} != {scan_name}'
+    qformer_attn = torch.load(os.path.join(attn_dir, qformer_x_attns_p, 'qformer_attn.pt'), map_location='cpu')
+    opt_attn = torch.load(os.path.join(attn_dir, qformer_x_attns_p, 'opt_attn.pt'), map_location='cpu')
     
-    # question_answer = anno_info['question'].replace(' ', '_') + '-' + anno_info['answers'][0].replace(' ', '_')
+    anno_info = opt_attn['anno']
+    scene_id = anno_info['scene_id']
+    
+    scene_counter[scene_id] += 1
+    if scene_counter[scene_id] > 3:
+        continue
+    
     object_ids = anno_info['object_ids']
     object_names = anno_info["object_names"]
     
-    ## get current qa score from exp dir
-    pred_info = new_qa_pred_gt[anno_info['question_id']]
-    uid = anno_info['question_id'] + '-' + anno_info['question'].replace(' ', '_') + '-' + anno_info['answers'][0].replace(' ', '_')
-    score = pred_info['score']
-    # if not score['CiDEr'] > 0.7:
-    #     continue
-    
-    print(scan_name)
     print(anno_info['question'])
     print(anno_info['answers'])
-    print("pred", pred_info['pred'])
+    print("pred", opt_attn['pred_answer'])
+    print(scene_id)
     
     ## get scene pcd
     scene_pcd_info = _get_scan_data(anno_info['scene_id'])
@@ -136,40 +126,61 @@ for qformer_x_attns_p in tqdm(attn_p_list[::5]):
         # cube.paint_uniform_color([0, 1, 0])  
         axis_aligned_bounding_box_list.append(aabb)
     
-    ## [layers(3), bs(1), nhead(12), num_learnable_query(32), scen_token(1024)]
-    x_attn_weight = attn_infos['x_attn_weight']
-    ## [bs(1), scen_token(1024), 3]
-    xyz = attn_infos['xyz']
     
-    ## new visualization version
+    
+    opt_attn_map = opt_attn['attn']
+    
+    ## mean in head
+    opt_attn_map = opt_attn_map.mean(1)
+    
+    ## filter irrelevant layer
+    opt_attn_map = opt_attn_map[..., :32]
+    
+    ## ### human: given the 3D scene, answer the question: " : 19
+    ## " ### assistant:' : 11
+    total_seq_len = opt_attn_map.shape[-1]
+    output_len = len(tokenizer(opt_attn['pred_answer'])['input_ids'])
+    
+    answer_token_attn = opt_attn_map[:, -(len(opt_attn['output_ids'])-1): -(len(opt_attn['output_ids'])-output_len + 1) , :]
+    prefix_len = len(tokenizer('### human: given the 3D scene, answer the question: "')['input_ids'])-1
+    qs_token_len = len(tokenizer(anno_info['question'])['input_ids'])-1
+    question_token_attn = opt_attn_map[:, 32+prefix_len:prefix_len+qs_token_len+32  :]
+    
+    opt_attn_map = torch.cat([question_token_attn, answer_token_attn], dim=1)
+    
+    
+    # ## [layers(3), bs(1), nhead(12), num_learnable_query(32), scen_token(1024)]
+    x_attn_weight = qformer_attn['x_attn_weight']
+    ## [bs(1), scen_token(1024), 3]
+    xyz = qformer_attn['xyz'].numpy()
+    
     # average the layer attention weight
-    avg_x_attn_weight = attn_infos['x_attn_weight'].mean(0)[0]
+    avg_x_attn_weight = qformer_attn['x_attn_weight'].mean(0)[0]
     # average the head attention weight
     avg_x_attn_weight = avg_x_attn_weight.mean(0)
-    # softmax
-    # avg_x_attn_weight = torch.nn.functional.softmax(avg_x_attn_weight * 100, dim=-1)
-    
-   
+
+
     # 定义从蓝色到黄色的颜色映射
     map_colors = ["blue", "yellow", "red"]  # 蓝色到黄色
     from matplotlib.colors import LinearSegmentedColormap
     cmap = LinearSegmentedColormap.from_list("mycmap", map_colors)
     full_activations = np.zeros(point_clouds.shape[0])
     min_activate = 1e9
-    plot_attention_map(avg_x_attn_weight)
+    # plot_attention_map(avg_x_attn_weight)
     for query_x_attn_weight in avg_x_attn_weight:
         ## 选出topk的激活值
         
-        _, argmax_idx = query_x_attn_weight.topk(k=5)
-        print(argmax_idx)
+        _, argmax_idx = query_x_attn_weight.topk(k=10)
         instrest_xyz = xyz[0, argmax_idx]
+        # print(instrest_xyz)
+        # print(argmax_idx)
         
         ## 由于没有xyz在原始点云中的ind，所以concat在原始点云后面
         point_clouds = np.concatenate([point_clouds, instrest_xyz], axis=0)
         colors = np.concatenate([colors, np.full((instrest_xyz.shape[0], 3), [0.5, 0.5, 0.5])], axis=0)
         
         # full_activations = np.full(point_clouds.shape[0], query_x_attn_weight.min()*1000)
-        full_activations = np.concatenate((full_activations, query_x_attn_weight[argmax_idx]*1000))
+        full_activations = np.concatenate((full_activations, query_x_attn_weight[argmax_idx]*0))
         if query_x_attn_weight[argmax_idx].min() < min_activate:
             min_activate = query_x_attn_weight[argmax_idx].min()
         
@@ -182,13 +193,13 @@ for qformer_x_attns_p in tqdm(attn_p_list[::5]):
             # 找到在0.2米范围内的点
             ind = tree.query_radius(point_clouds[index:index+1], r=radius)[0]
             inds.append(ind)
-            activations.append(activation.item()*1000)
-            
+            activations.append(activation.item())
+        
         normalized_activations = (activations - np.min(activations)) / (np.max(activations) - np.min(activations))
         for ind, act in zip(inds, normalized_activations):
             full_activations[ind] = act  # 设置相同的激活值
-            
-    full_activations[full_activations == 0] = min_activate
+        
+    # full_activations[full_activations == 0] = min_activate
     from sklearn.neighbors import NearestNeighbors
     nn = NearestNeighbors(radius=0.3, algorithm='ball_tree').fit(point_clouds)
     distances, indices = nn.radius_neighbors(point_clouds)
@@ -207,12 +218,104 @@ for qformer_x_attns_p in tqdm(attn_p_list[::5]):
     
     mixed_colors = 0.6 * colors + 0.4 * activation_colors[:,:3]
     
-    # pcd = o3d.geometry.PointCloud()
-    # pcd.points = o3d.utility.Vector3dVector(point_clouds)
-    # pcd.colors = o3d.utility.Vector3dVector(mixed_colors)
-    # o3d.visualization.draw_geometries([pcd, *axis_aligned_bounding_box_list])
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(point_clouds)
+    pcd.colors = o3d.utility.Vector3dVector(mixed_colors)
+    o3d.visualization.draw_geometries([pcd, *axis_aligned_bounding_box_list])
     
     
+    for visual_layer in range(8, 24):
+        visual_layer = 20
+        ks = [1, 2]
+        # plot_attention_map(opt_attn_map[visual_layer])
+        for k in ks:
+            layer_opt_attn_map = opt_attn_map[visual_layer]
+            
+            top_values, top_indices = torch.topk(layer_opt_attn_map.float(), k, dim=1, largest=True)
+            print(top_values)
+            print(top_indices)
+            # top_indices = top_indices[:, k-1:]
+            top_indices = np.unique(top_indices.numpy())
+            print(top_indices)
+            ## drop bias
+            
+        
+            ## [layers(3), bs(1), nhead(12), num_learnable_query(32), scen_token(1024)]
+            x_attn_weight = qformer_attn['x_attn_weight']
+            ## [bs(1), scen_token(1024), 3]
+            xyz = qformer_attn['xyz'].numpy()
+            
+            ## new visualization version
+            # average the layer attention weight
+            avg_x_attn_weight = qformer_attn['x_attn_weight'].mean(0)[0]
+            # average the head attention weight
+            avg_x_attn_weight = avg_x_attn_weight.mean(0)
+
+        
+            # 定义从蓝色到黄色的颜色映射
+            map_colors = ["blue", "yellow", "red"]  # 蓝色到黄色
+            from matplotlib.colors import LinearSegmentedColormap
+            cmap = LinearSegmentedColormap.from_list("mycmap", map_colors)
+            full_activations = np.zeros(point_clouds.shape[0])
+            min_activate = 1e9
+            for query_x_attn_weight in avg_x_attn_weight[top_indices]:
+                ## 选出topk的激活值
+                
+                _, argmax_idx = query_x_attn_weight.topk(k=10)
+                instrest_xyz = xyz[0, argmax_idx]
+                print(instrest_xyz)
+                
+                ## 由于没有xyz在原始点云中的ind，所以concat在原始点云后面
+                point_clouds = np.concatenate([point_clouds, instrest_xyz], axis=0)
+                colors = np.concatenate([colors, np.full((instrest_xyz.shape[0], 3), [0.5, 0.5, 0.5])], axis=0)
+                
+                # full_activations = np.full(point_clouds.shape[0], query_x_attn_weight.min()*1000)
+                full_activations = np.concatenate((full_activations, query_x_attn_weight[argmax_idx]*0))
+                if query_x_attn_weight[argmax_idx].min() < min_activate:
+                    min_activate = query_x_attn_weight[argmax_idx].min()
+                
+                tree = BallTree(point_clouds)
+                # 将每个激活点的激活值扩展到0.2米范围内的所有点
+                radius = 0.2  # 0.2米
+                inds = []
+                activations = []
+                for index, activation in zip(list(range(point_clouds.shape[0]-instrest_xyz.shape[0], point_clouds.shape[0])), query_x_attn_weight[argmax_idx]):
+                    # 找到在0.2米范围内的点
+                    ind = tree.query_radius(point_clouds[index:index+1], r=radius)[0]
+                    inds.append(ind)
+                    activations.append(activation.item())
+                
+                normalized_activations = (activations - np.min(activations)) / (np.max(activations) - np.min(activations))
+                for ind, act in zip(inds, normalized_activations):
+                    full_activations[ind] = act  # 设置相同的激活值
+                    
+                    
+                
+            # full_activations[full_activations == 0] = min_activate
+            from sklearn.neighbors import NearestNeighbors
+            nn = NearestNeighbors(radius=0.3, algorithm='ball_tree').fit(point_clouds)
+            distances, indices = nn.radius_neighbors(point_clouds)
+            def gaussian_kernel(distance, sigma=0.05):
+                return np.exp(-0.5 * (distance ** 2) / sigma ** 2)
+            # 平滑激活值
+            smoothed_activations = np.zeros(full_activations.shape[0])
+            for i in range(full_activations.shape[0]):
+                weights = gaussian_kernel(distances[i])
+                weighted_activations = weights * full_activations[indices[i]]
+                smoothed_activations[i] = np.sum(weighted_activations) / np.sum(weights)
+                
+            # 归一化激活值并映射到颜色
+            # normalized_activations = (smoothed_activations - np.min(smoothed_activations)) / (np.max(smoothed_activations) - np.min(smoothed_activations))
+            activation_colors = cmap(smoothed_activations)
+            
+            mixed_colors = 0.6 * colors + 0.4 * activation_colors[:,:3]
+            
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(point_clouds)
+            pcd.colors = o3d.utility.Vector3dVector(mixed_colors)
+            o3d.visualization.draw_geometries([pcd, *axis_aligned_bounding_box_list])
+
+        break
     ## old visualization version
     # for li, layer_x_attn_weight in enumerate(x_attn_weight):
     #     ## remove batch

@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as nnf
 from torch import nn, Tensor
 from typing import Dict
-
+import os
 from collections import OrderedDict
 from transformers import (
     AutoTokenizer,
@@ -283,21 +283,19 @@ class captioner(nn.Module):
         prefix_feature = self.qformer_to_language_projection(query_outputs_latent)
         
         ## save x-attn here
-        # import os
-        # assert detector_output['enc_xyz'].shape[0] == 1
-        # task_name = inputs['task_name']
-        # x_attn_weight = torch.stack(query_outputs['cross_attentions'], dim=0)
-        # attn_dict = {
-        #     'x_attn_weight' : x_attn_weight,
-        #     'xyz' : detector_output['enc_xyz'],
-        #     'scan_idx' : inputs['scan_idx'],
-        #     'scan_name': inputs['scan_name']
-        # }
-        # op_path = f'results/attn_vis/{task_name}'
-        # if not os.path.exists(op_path):
-        #     os.makedirs(op_path)
-        # scan_idx = inputs['scan_idx']
-        # torch.save(attn_dict, f'{op_path}/{scan_idx.item()}.pt')
+        if os.getenv("ll3da_opt_attn_output", 'False') == 'True':
+            assert detector_output['enc_xyz'].shape[0] == 1
+            x_attn_weight = torch.stack(query_outputs['cross_attentions'], dim=0)
+            attn_dict = {
+                'x_attn_weight' : x_attn_weight,
+                'xyz' : detector_output['enc_xyz'],
+                'scan_idx' : inputs['scan_idx'],
+                'scan_name': inputs['scan_name']
+            }
+            op_path = os.environ['LL3DA_ATTN_OP_DIR']
+            scan_idx = inputs['scan_idx']
+            os.makedirs(f'{op_path}/{scan_idx.item()}', exist_ok=True)
+            torch.save(attn_dict, f'{op_path}/{scan_idx.item()}/qformer_attn.pt')
         
         return prefix_feature
         
@@ -464,6 +462,8 @@ class captioner(nn.Module):
         )
         prefix_tokens = prefix_tokens.to(self.dtype)
         
+        attentions = [None] * prefix_tokens.shape[0]
+        
         for batch_id in range(prefix_tokens.shape[0]):
             sample_instruction = instruction[batch_id]     
             sample_mask = instruction_mask[batch_id]     # ntoken
@@ -481,9 +481,11 @@ class captioner(nn.Module):
                 **self.caption_config
             )
             output_ids.append(output['output_ids'])
+            attentions[batch_id] = output.get('attentions', None)
         
         output_ids = torch.cat(output_ids, dim=0)
         detector_output['output_ids'] = output_ids
+        detector_output['attentions'] = attentions
         
         return detector_output
     

@@ -43,8 +43,8 @@ def shift_scale_points(pred_xyz, src_range, dst_range=None):
     """
     if dst_range is None:
         dst_range = [
-            torch.zeros((src_range[0].shape[0], 3), device=src_range[0].device, dtype=src_range[0].dtype),
-            torch.ones((src_range[0].shape[0], 3), device=src_range[0].device, dtype=src_range[0].dtype),
+            torch.zeros((src_range[0].shape[0], 3), device=src_range[0].device),
+            torch.ones((src_range[0].shape[0], 3), device=src_range[0].device),
         ]
 
     if pred_xyz.ndim == 4:

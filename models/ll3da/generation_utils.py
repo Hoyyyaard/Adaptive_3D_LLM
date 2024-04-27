@@ -2,13 +2,15 @@ import torch, heapq, time
 from torch import Tensor
 from typing import Callable
 from collections import OrderedDict
-
+import os
 
 def greedy_decode(transformer: Callable, **kwargs) -> Tensor:
     
     ## prepare inputs
     max_length = kwargs['max_length']
     inputs_embeds = kwargs['inputs_embeds'] # batch x nwords x channel
+    
+    ll3da_opt_attn_output = kwargs.get('ll3da_opt_attn_output', False)
     
     batch, _, channel = inputs_embeds.shape
     
@@ -24,6 +26,7 @@ def greedy_decode(transformer: Callable, **kwargs) -> Tensor:
         
         step_output = transformer(
             inputs_embeds=temporal_inputs,
+            output_attentions=ll3da_opt_attn_output 
         )
         
         ## greedy decoding, find out whats the most possible word
@@ -37,7 +40,7 @@ def greedy_decode(transformer: Callable, **kwargs) -> Tensor:
         
         temporal_inputs = torch.cat((inputs_embeds, embedding_layer(output_ids[:, :word_id+1])), dim=1)
         
-    return OrderedDict({'output_ids': output_ids.long()})
+    return OrderedDict({'output_ids': output_ids.long(), 'attentions': step_output.get('attentions', None)})
 
 
 def beam_search_decode(transformer: Callable, **kwargs) -> Tensor:
@@ -205,7 +208,11 @@ def generation(transformer: Callable, **kwargs):
     else:
         raise NotImplementedError
     
-    if kwargs['num_beams'] is None:
+    ll3da_opt_attn_output = os.getenv("ll3da_opt_attn_output", 'False')
+    if ll3da_opt_attn_output == 'True':
+        kwargs['ll3da_opt_attn_output'] = True
+        outputs = greedy_decode(transformer, **kwargs)
+    elif kwargs['num_beams'] is None:
         # batch x max_length
         outputs = greedy_decode(transformer, **kwargs)
     else:

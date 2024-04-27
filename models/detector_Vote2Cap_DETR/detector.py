@@ -430,10 +430,7 @@ def build_decoder(cfg):
 
 def detector(args, dataset_config):
     
-    if args.local_config:
-        from models.detector_Vote2Cap_DETR.config_local import model_config
-    else:
-        from models.detector_Vote2Cap_DETR.config import model_config
+    from models.detector_Vote2Cap_DETR.config import model_config
     
     cfg = model_config(args, dataset_config)
     

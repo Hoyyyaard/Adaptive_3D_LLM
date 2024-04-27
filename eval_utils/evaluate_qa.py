@@ -113,17 +113,17 @@ def evaluate(
         for key in batch_data_label:
             if not isinstance(batch_data_label[key], list):
                 batch_data_label[key] = batch_data_label[key].to(net_device)
-                if batch_data_label[key].dtype == torch.float32:
-                    batch_data_label[key] = batch_data_label[key].to(net_dtype)
-            else:
-                batch_data_label[key] = batch_data_label[key]
+            #     if batch_data_label[key].dtype == torch.float32:
+            #         batch_data_label[key] = batch_data_label[key].to(net_dtype)
+            # else:
+            #     batch_data_label[key] = batch_data_label[key]
         
         model_input = {
-            'point_clouds': batch_data_label.get('point_clouds',None),
+            'point_clouds': batch_data_label['point_clouds'],
             'point_cloud_dims_min': batch_data_label['point_cloud_dims_min'],
             'point_cloud_dims_max': batch_data_label['point_cloud_dims_max'],
-            'qformer_input_ids': batch_data_label.get('qformer_input_ids',None),
-            'qformer_attention_mask': batch_data_label.get('qformer_input_ids',None),
+            'qformer_input_ids': batch_data_label['qformer_input_ids'],
+            'qformer_attention_mask': batch_data_label['qformer_attention_mask'],
             'instruction': batch_data_label['instruction'],
             'instruction_mask': batch_data_label['instruction_mask'],
             'scan_idx' : batch_data_label['scan_idx'],
@@ -140,6 +140,8 @@ def evaluate(
             outputs = model(batch_data_label, is_eval=True, task_name='qa')
         else:
             outputs = model(model_input, is_eval=True, task_name='qa')
+        
+        attentions=outputs["attentions"]
         
         outputs = dict(
             output_ids=outputs["output_ids"],
@@ -165,6 +167,26 @@ def evaluate(
             answer = answers[idx]
             answer = ' '.join(filter(lambda w: w, answer.split(' ')))
             candidates[key] = [answer]
+        
+        ll3da_opt_attn_output = os.getenv("ll3da_opt_attn_output", 'False')
+        if ll3da_opt_attn_output == 'True':
+            opt_attn_op_dir = os.environ['LL3DA_ATTN_OP_DIR']
+            for idx in range(output_ids.shape[0]):
+                anno = annotations[sample_index[idx]]
+                answer = answers[idx]
+                attn = torch.cat(attentions[idx], dim=0)
+                instr = batch_data_label['instruction'][idx][batch_data_label['instruction_mask'][idx].bool()]
+                opt_attn_dict = {
+                    'anno' : anno,
+                    'pred_answer' : answer,
+                    'attn' : attn,
+                    'instr' : instr,
+                    'output_ids': output_ids[idx]
+                }
+                idx = batch_data_label['scan_idx'][idx].item()
+                os.makedirs(os.path.join(opt_attn_op_dir, str(idx)), exist_ok=True)
+                torch.save(opt_attn_dict, os.path.join(opt_attn_op_dir, str(idx), 'opt_attn.pt'))
+            
 
         # Memory intensive as it gathers point cloud GT tensor across all ranks
         time_delta.update(time.time() - curr_time)

@@ -272,6 +272,7 @@ class Dataset(ScanNetBaseDataset):
         # open3d.visualization.draw_geometries([objects_pcd])
         
         if self.args.finetune_flex_opt or self.args.abl_ll3da_w_openscene_token:
+
             openscene_ret_dict = (self.openscene_fts_cache.get_openscene_scan_datas(scan_name, preprocess=self.args.token_preprocess))
             pcd = openscene_ret_dict['openscene_point_clouds']
             instance_labels = openscene_ret_dict['openscene_instance_labels']
