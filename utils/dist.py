@@ -1,8 +1,9 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 import pickle
-
+import os
 import torch
 import torch.distributed as dist
+import subprocess
 
 
 def is_distributed():
@@ -62,7 +63,34 @@ def init_distributed(gpu_id, global_rank, world_size, dist_url, dist_backend):
     )
     torch.distributed.barrier()
     setup_print_for_distributed(is_primary())
+    
+def init_slurm_distributed():
+    """
+    Initialize the distributed environment from SLURM
+    """
+    proc_id = int(os.environ["SLURM_PROCID"])
+    ntasks = int(os.environ["SLURM_NTASKS"])
+    node_list = os.environ["SLURM_NODELIST"]
+    dist_backend = "nccl"
+    num_gpus = torch.cuda.device_count()
+    addr = subprocess.getoutput(f"scontrol show hostname {node_list} | head -n1")
+    # specify master port
+    if "MASTER_PORT" in os.environ:
+        pass  # use MASTER_PORT in the environment variable
+    else:
+        os.environ["MASTER_PORT"] = "29500"
+    if "MASTER_ADDR" not in os.environ:
+        os.environ["MASTER_ADDR"] = addr
+    os.environ["WORLD_SIZE"] = str(ntasks)
+    os.environ["LOCAL_RANK"] = str(proc_id % num_gpus)
+    os.environ["RANK"] = str(proc_id)
+    print(f"local rank: {str(proc_id % num_gpus)}, global rank: {str(proc_id)}, world size: {num_gpus}")
+    torch.distributed.init_process_group(
+        backend=dist_backend, rank=proc_id, world_size=ntasks
+    )
+    torch.distributed.barrier()
 
+    return int(proc_id % num_gpus)
 
 def all_reduce_sum(tensor):
     if not is_distributed():

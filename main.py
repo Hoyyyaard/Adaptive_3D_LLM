@@ -13,7 +13,7 @@ from torch.multiprocessing import set_start_method
 from transformers import AutoConfig
 from utils.io import resume_if_possible
 from utils.misc import my_worker_init_fn
-from utils.dist import init_distributed, is_distributed, is_primary, get_rank, barrier
+from utils.dist import init_distributed, is_distributed, is_primary, get_rank, barrier, init_slurm_distributed
 
 
 def make_args_parser():
@@ -162,6 +162,9 @@ def make_args_parser():
     ## 指定模型类型，如果训练LLM只能用FP16
     parser.add_argument("--FP16", action='store_true')
     
+    ## SLURM RUN
+    parser.add_argument("--slurm_run", action='store_true')
+    
     args = parser.parse_args()
     args.use_height = not args.no_height
     
@@ -293,15 +296,19 @@ def build_dataset(args):
     
 def main(local_rank, args):
     
-    if args.ngpus > 1:
-        init_distributed(
-            local_rank,
-            global_rank=local_rank,
-            world_size=args.ngpus,
-            dist_url=args.dist_url,
-            dist_backend="nccl",
-        )
+    if args.slurm_run:
+        local_rank = init_slurm_distributed()
     
+    else:
+        if args.ngpus > 1:
+            init_distributed(
+                local_rank,
+                global_rank=local_rank,
+                world_size=args.ngpus,
+                dist_url=args.dist_url,
+                dist_backend="nccl",
+            )
+        
     
     torch.cuda.set_device(local_rank)
     np.random.seed(args.seed)
@@ -768,10 +775,13 @@ def finetune_flex_opt_main(local_rank, args):
 def launch_distributed(args):
     world_size = args.ngpus
     main_func = main if not args.finetune_flex_opt else finetune_flex_opt_main
-    if world_size == 1:
-        main_func(local_rank=0, args=args)
+    if args.slurm_run:
+        main_func(-1, args)
     else:
-        torch.multiprocessing.spawn(main_func, nprocs=world_size, args=(args,))
+        if world_size == 1:
+            main_func(local_rank=0, args=args)
+        else:
+            torch.multiprocessing.spawn(main_func, nprocs=world_size, args=(args,))
     # main_func(-1, args)
 
 if __name__ == "__main__":
