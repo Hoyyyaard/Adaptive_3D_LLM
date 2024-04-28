@@ -500,6 +500,12 @@ class captioner(nn.Module):
             sample_instruction = instruction[batch_id]     
             sample_mask = instruction_mask[batch_id]     # ntoken
             
+            sample_flex_attn_info = {
+                'qformer_batch_x_attn': flex_attn_info['qformer_batch_x_attn'][batch_id].unsqueeze(0),
+                'qformer_scene_token_xyz': flex_attn_info['qformer_scene_token_xyz'][batch_id].unsqueeze(0),
+                'scan_name': [inputs['scan_name'][batch_id]],
+            }
+            
             output = generation(
                 self.transformer, 
                 inputs_embeds=torch.cat(
@@ -510,7 +516,8 @@ class captioner(nn.Module):
                     dim=1
                 ),
                 max_length=max_gen_length,
-                **self.caption_config
+                **self.caption_config,
+                flex_attn_info=sample_flex_attn_info
             )
             output_ids.append(output['output_ids'])
             attentions[batch_id] = output.get('attentions', None)

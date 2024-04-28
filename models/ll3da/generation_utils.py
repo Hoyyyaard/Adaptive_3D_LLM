@@ -26,7 +26,8 @@ def greedy_decode(transformer: Callable, **kwargs) -> Tensor:
         
         step_output = transformer(
             inputs_embeds=temporal_inputs,
-            output_attentions=ll3da_opt_attn_output 
+            output_attentions=True,
+            flex_attn_info=kwargs['flex_attn_info']
         )
         
         ## greedy decoding, find out whats the most possible word
@@ -58,6 +59,13 @@ def beam_search_decode(transformer: Callable, **kwargs) -> Tensor:
     # batch x nbeams x length x channel
     expanded_inputs_embeds = inputs_embeds.unsqueeze(1).repeat(1, nbeams, 1, 1)
     
+    flex_attn_info = kwargs['flex_attn_info']
+    expanded_flex_attn_info = {
+        'scan_name' : flex_attn_info['scan_name'] * nbeams,
+        'qformer_batch_x_attn': flex_attn_info['qformer_batch_x_attn'].repeat(nbeams, 1, 1, 1, 1),
+        'qformer_scene_token_xyz': flex_attn_info['qformer_scene_token_xyz'].repeat(nbeams, 1, 1),
+    }
+    
     ## prepare storage
     output_scores = torch.zeros(batch, nbeams).to(inputs_embeds.device)
     output_ids = torch.ones(batch, nbeams, max_length).to(inputs_embeds.device)
@@ -76,6 +84,8 @@ def beam_search_decode(transformer: Callable, **kwargs) -> Tensor:
         
             step_output = transformer(
                 inputs_embeds=inputs_embeds,
+                output_attentions=True,
+                flex_attn_info=flex_attn_info
             )
             # topk inds
             topk_scores, topk_inds = step_output.logits[:, -1, :].topk(
@@ -98,6 +108,8 @@ def beam_search_decode(transformer: Callable, **kwargs) -> Tensor:
                 inputs_embeds=temporal_inputs.reshape(
                     batch * nbeams, prefix_length + word_id, channel
                 ),
+                output_attentions=True,
+                flex_attn_info=expanded_flex_attn_info
             )
             last_word_logits = step_output.logits[:, -1, :].reshape(
                 batch, nbeams, -1

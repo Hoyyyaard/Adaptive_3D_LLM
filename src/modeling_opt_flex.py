@@ -667,9 +667,9 @@ class DenseTokenSelection(nn.Module):
         batch_kd_tree = []
         for scan_name in batch_scan_name:
             scan_name = scan_name.split('_')[0]
-            if scan_name in self.pcd_dict.keys():
-                batch_pcd.append(self.pcd_dict[scan_name][0])
-                batch_kd_tree.append(self.pcd_dict[scan_name][1])
+            # if scan_name in self.pcd_dict.keys():
+            batch_pcd.append(self.pcd_dict[scan_name][0])
+            batch_kd_tree.append(self.pcd_dict[scan_name][1])
             # else:
             #     mesh_vertices = np.load(os.path.join(self._dense_pcd_dir, scan_name) + "_aligned_vert.npy")
             #     point_cloud = mesh_vertices[:, 0:6]
