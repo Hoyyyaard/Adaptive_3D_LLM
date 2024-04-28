@@ -168,7 +168,7 @@ class captioner(nn.Module):
     
     def train(self, mode: bool = True):
         super().train(mode)
-        if self.freeze_llm is True:
+        if self.freeze_llm is True and not self.use_flex_attn:
             self.transformer.eval()
             for param in self.transformer.parameters():
                 param.requires_grad = False
@@ -182,6 +182,7 @@ class captioner(nn.Module):
         self.visual_nquery = 8
         self.nlatent_query = 32
         self.freeze_llm = args.freeze_llm
+        self.use_flex_attn = args.use_flex_attn
         
         ## initialize tokenizer for batch decoding
         self.tokenizer = AutoTokenizer.from_pretrained(args.vocab)
@@ -396,9 +397,11 @@ class captioner(nn.Module):
         )
         final_loss = torch.sum(loss_per_word * mask) / torch.sum(mask + 1e-6)
         # parameter activation for multi-gpu training
-        for param in self.parameters():
-            if param.requires_grad:
-                final_loss += 0 * torch.sum(param.to(final_loss.dtype) ** 2)
+        ## TODO: CHECK HERE
+        if not self.use_flex_attn:
+            for param in self.parameters():
+                if param.requires_grad:
+                    final_loss += 0 * torch.sum(param.to(final_loss.dtype) ** 2)
         return final_loss
     
     def predict_densecap(self, detector_output: Dict, inputs: Dict, task_name: str, max_gen_length: int=64) -> Dict:

@@ -159,6 +159,8 @@ def make_args_parser():
     parser.add_argument("--use_flex_attn", action='store_true')    
     ## 用于预处理LL3DA的detector输入和DENSE TOKEN
     parser.add_argument("--ll3da_token_preprocess", action='store_true')
+    ## 指定模型类型，如果训练LLM只能用FP16
+    parser.add_argument("--FP16", action='store_true')
     
     args = parser.parse_args()
     args.use_height = not args.no_height
@@ -201,6 +203,7 @@ def make_args_parser():
         os.environ['use_flex_attn'] = 'True'
     if args.ll3da_token_preprocess:
         os.environ['ll3da_token_preprocess'] = 'True'
+    os.environ['num_finetune_hidden_layers'] = str(args.num_finetune_hidden_layers)
     return args
 
 
@@ -318,6 +321,16 @@ def main(local_rank, args):
     config = AutoConfig.from_pretrained('ckpts/opt-model/config.json')
     model = CaptionNet(args, dataset_config, datasets['train'], config)
     
+    for li in range(config.num_hidden_layers-args.num_finetune_hidden_layers):
+        del model.captioner.transformer.model.decoder.layers[li].self_attn.k_hr_proj
+        del model.captioner.transformer.model.decoder.layers[li].self_attn.v_hr_proj
+        del model.captioner.transformer.model.decoder.layers[li].self_attn.encoder_to_llm_projection
+    
+    if args.gradient_checkpoint:
+        print('Training use gradient checkpointing...')
+        model.captioner.transformer.gradient_checkpointing_enable()
+        model.captioner.transformer.model.decoder.gradient_checkpointing = True
+    
     # testing phase
     if args.test_only:
 
@@ -357,6 +370,18 @@ def main(local_rank, args):
         ### whether or not use pretrained weights
         if args.pretrained_weights is not None:
             checkpoint = torch.load(args.pretrained_weights, map_location="cpu")
+            
+            new_checkpoint = {'model': OrderedDict()}
+            new_checkpoint['model'] = copy.deepcopy(checkpoint['model'])
+            if args.use_flex_attn:
+                ## DENSE TOKEN的编码器跟DETECTOR的一样
+                for k,v in checkpoint['model'].items():
+                    if k.find('detector.tokenizer.') != -1:
+                        new_checkpoint['model'][k.replace('detector.tokenizer.', 'captioner.transformer.model.decoder.dense_token_selection.tokenizer.')] = v
+                    if k.find('detector.encoder.') != -1:
+                        new_checkpoint['model'][k.replace('detector.tokenizer.', 'captioner.transformer.model.decoder.dense_token_selection.encoder.')] = v
+                checkpoint = new_checkpoint
+                
             msg = model.load_state_dict(checkpoint['model'], strict=False)
             print(msg)
             
@@ -370,23 +395,55 @@ def main(local_rank, args):
             model_no_ddp = model.cuda()
             model = model.cuda(local_rank)
             
+            trainable_params = [n for n,p in model_no_ddp.named_parameters() if p.requires_grad and not n.find('transformer') != -1 ]
+            if args.only_finetune_self_attn:
+                ## TODO: BUG HERE
+                trainable_params.extend([f'model.decoder.layers.{li}.self_attn.' for li in range(config.num_hidden_layers-args.num_finetune_hidden_layers,config.num_hidden_layers)])
+            elif args.only_finetune_flex_attn:
+                trainable_params.extend([f'model.decoder.layers.{li}.self_attn.v_hr_proj.' for li in range(config.num_hidden_layers-args.num_finetune_hidden_layers,config.num_hidden_layers)])
+                trainable_params.extend([f'model.decoder.layers.{li}.self_attn.k_hr_proj.' for li in range(config.num_hidden_layers-args.num_finetune_hidden_layers,config.num_hidden_layers)])
+            elif args.finetune_flex_self_attn:
+                trainable_params.extend([f'model.decoder.layers.{li}.self_attn.' for li in range(config.num_hidden_layers-args.num_finetune_hidden_layers,config.num_hidden_layers)])
+                
+            for name, param in model_no_ddp.named_parameters():
+                for tp in trainable_params:
+                    if name.find(tp) != -1:
+                        param.requires_grad_(True)
+                        break
+                    param.requires_grad_(False)
+            
+            
             if is_distributed():
                 model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
                 model = torch.nn.parallel.DistributedDataParallel(
-                    model, device_ids=[local_rank],
+                    model, device_ids=[local_rank], 
                 )
+            
+            if args.use_flex_attn:
+                FP32_params = []
+                FP16_params = []
+                for n,p in model_no_ddp.named_parameters():
+                    if n.find('transformer') != -1 and p.requires_grad:
+                        FP16_params.append(p)
+                    elif p.requires_grad:
+                        FP32_params.append(p)
+                        
+                params_group = [{'params': FP16_params, 'lr': args.base_lr, 'weight_decay': args.weight_decay, 'eps': 1e-4},
+                                {'params': FP32_params, 'lr': args.base_lr, 'weight_decay': args.weight_decay}]
+            else:
+                params_group = filter(lambda params: params.requires_grad, model_no_ddp.parameters())
                 
             if args.optimizer == 'AdamW':
                 optimizer = torch.optim.AdamW(
-                    filter(lambda params: params.requires_grad, model_no_ddp.parameters()), 
+                    params_group, 
                     lr=args.base_lr, 
-                    weight_decay=args.weight_decay
+                    weight_decay=args.weight_decay,
                 )
             elif args.optimizer == 'SGD':
                 optimizer = torch.optim.SGD(
-                    filter(lambda params: params.requires_grad, model_no_ddp.parameters()), 
+                    params_group, 
                     lr=args.base_lr, 
-                    weight_decay=args.weight_decay
+                    weight_decay=args.weight_decay,
                 )
             else:
                 raise NotImplementedError

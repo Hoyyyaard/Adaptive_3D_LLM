@@ -4,6 +4,8 @@ import os
 import torch
 import math
 import sys
+from third_party.pointnet2.pointnet2_modules import PointnetSAModuleVotes, PointnetSAModuleVotesFP16
+from third_party.pointnet2.pointnet2_utils import ball_query, grouping_operation
 sys.path.append('/home/admin/Projects/LL3DA/')
 import heapq, time
 from torch import Tensor
@@ -21,9 +23,7 @@ from transformers import (
     InstructBlipQFormerConfig
 )
 from models.detector_Vote2Cap_DETR.transformer import (
-    MaskedTransformerEncoder, TransformerDecoder,
-    TransformerDecoderLayer, TransformerEncoder,
-    TransformerEncoderLayer
+    MaskedTransformerEncoder, TransformerDecoder, MaskedTransformerEncoderFP16, TransformerEncoder, TransformerEncoderLayer
 )
 from transformers.activations import ACT2FN
 from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask
@@ -156,6 +156,16 @@ class OPTAttention(nn.Module):
         self.q_proj = nn.Linear(self.embed_dim, self.embed_dim, bias=self.enable_bias)
         self.out_proj = nn.Linear(self.embed_dim, self.embed_dim, bias=self.enable_bias)
 
+        ## FLEX
+        self.encoder_to_llm_projection = nn.Sequential(
+            nn.Linear(256, self.embed_dim),
+            nn.ReLU(),
+            nn.Linear(self.embed_dim, self.embed_dim),
+            nn.ReLU(),
+        )
+        self.k_hr_proj = nn.Linear(self.embed_dim, self.embed_dim, bias=self.enable_bias)
+        self.v_hr_proj = nn.Linear(self.embed_dim, self.embed_dim, bias=self.enable_bias)
+        
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
 
@@ -167,6 +177,7 @@ class OPTAttention(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         layer_head_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
+        reg_features = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
 
@@ -198,6 +209,48 @@ class OPTAttention(nn.Module):
             key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
             value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
 
+            ## FLEX
+            if reg_features is not None:
+                reg_features = self.encoder_to_llm_projection(reg_features)
+                bsz, seq_len, topk, tl, hdim = reg_features.shape
+                hr_key_value_states = reg_features.view(bsz, seq_len, topk*tl, hdim)
+                
+                dense_token_num = hr_key_value_states.shape[2]
+                scene_token_num = 32
+                
+                hr_attention_mask = torch.ones((bsz, hr_key_value_states.shape[1], hr_key_value_states.shape[1]*hr_key_value_states.shape[2]), device=hr_key_value_states.device, dtype=hr_key_value_states.dtype)*torch.finfo(hr_key_value_states.dtype).min
+                ## 每个TEXT TOKEN只能跟自己选出来的DENSE SCENE TOKEN进行交互
+                ## PAD的TEXT TOKEN也需要MASK
+                batch_valid_len_w_eos = (attention_mask.squeeze(1)[:, -1, :] == 0).sum(dim=1) - scene_token_num
+                for bs in range(bsz):
+                    valid_length = batch_valid_len_w_eos[bs].item()
+                    for j in range(valid_length):
+                        start_index = j * dense_token_num
+                        end_index = (j+1) * dense_token_num
+                        hr_attention_mask[bs, j, start_index:end_index] = 0.
+                        
+                ## 最后为SCENE TOKEN加上ATTN MASK
+                ## OPTION1: 每个SCENE TOKEN都可以于DENSE TOKEN交互
+                scene_token_attention_mask = torch.zeros((bsz, scene_token_num, hr_key_value_states.shape[1]*hr_key_value_states.shape[2]), device=hr_key_value_states.device, dtype=hr_key_value_states.dtype)
+                        
+                ## OPTION2: 每个SCENE TOKEN只能和自己选出来的DENSE TOKEN交互
+                # scene_token_attention_mask = torch.ones((bsz, scene_token_num, hr_key_value_states.shape[1]*hr_key_value_states.shape[2]), device=hr_key_value_states.device, dtype=hr_key_value_states.dtype)*torch.finfo(hr_key_value_states.dtype).min
+                # for bs in range(bsz):
+                #     top_indices_bs = top_indices[bs].view(-1)
+                #     for dj in range(len(top_indices_bs)):
+                #         id = top_indices_bs[dj]
+                #         scene_token_attention_mask[bs, id, dj*10:(dj+1)*10] = 0.
+                
+                hr_attention_mask = torch.cat([scene_token_attention_mask, hr_attention_mask], dim=1)
+                ## concat 到原来的attention mask上
+                attention_mask = torch.cat([attention_mask, hr_attention_mask.unsqueeze(1)], dim=-1)
+                hr_key_value_states = hr_key_value_states.view(bsz, -1, hidden_states.shape[-1]).contiguous()
+                hr_key_states = self._shape(self.k_hr_proj(hr_key_value_states), -1, bsz)
+                hr_value_states = self._shape(self.v_hr_proj(hr_key_value_states), -1, bsz)
+                key_states = torch.cat([key_states, hr_key_states], dim=2)
+                value_states = torch.cat([value_states, hr_value_states], dim=2)
+                
+                
         if self.is_decoder:
             # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
             # Further calls to cross_attention layer can then reuse all cross-attention
@@ -498,6 +551,7 @@ OPT_ATTENTION_CLASSES = {
 
 
 from models.detector_Vote2Cap_DETR.config import model_config_flex
+from scipy.spatial import cKDTree
 
 class DenseTokenSelection(nn.Module):
     def __init__(self):
@@ -505,21 +559,23 @@ class DenseTokenSelection(nn.Module):
         self._query_topk = 4
         self._scene_token_topk = 1
         
-        self._sample_nearest_pcd_radius = 0.4
-        self._sample_nearest_pcd_npoint = 1024
+        self._sample_nearest_pcd_radius = 0.3
+        self._sample_nearest_pcd_npoint = 512
         
         self._dense_pcd_dir = 'data/scannet/scannet_data_dense'
         
         self._preenc_npoints = 5
         cfg = model_config_flex(self._preenc_npoints)
         self.tokenizer = self._build_preencoder(cfg)
+        self.tokenizer = self.tokenizer.float()
         self.encoder = self._build_encoder(cfg)
-        self.tokenizer = self.tokenizer.to(torch.float32)
-        self.encoder = self.encoder.to(torch.float32)
+        self.encoder.interim_downsampling = self.encoder.interim_downsampling.float()
+        
+        self.pcd_dict = {}
     
     def _build_preencoder(self, cfg):
         mlp_dims = [cfg.in_channel, 64, 128, cfg.enc_dim]
-        preencoder = PointnetSAModuleVotes(
+        preencoder = PointnetSAModuleVotesFP16(
             radius=0.2,
             nsample=256,
             npoint=cfg.preenc_npoints,
@@ -548,7 +604,7 @@ class DenseTokenSelection(nn.Module):
                 dropout=cfg.enc_dropout,
                 activation=cfg.enc_activation,
             )
-            interim_downsampling = PointnetSAModuleVotes(
+            interim_downsampling = PointnetSAModuleVotesFP16(
                 radius=0.2,
                 nsample=256,
                 npoint=cfg.preenc_npoints,
@@ -557,7 +613,7 @@ class DenseTokenSelection(nn.Module):
             )
             
             masking_radius = [math.pow(x, 2) for x in [0.4, 0.8, 1.2]]
-            encoder = MaskedTransformerEncoder(
+            encoder = MaskedTransformerEncoderFP16(
                 encoder_layer=encoder_layer,
                 num_layers=3,
                 interim_downsampling=interim_downsampling,
@@ -608,20 +664,24 @@ class DenseTokenSelection(nn.Module):
     def _get_batch_scan_dense_pcd(self, batch_scan_name):
         batch_pcd = []
         for scan_name in batch_scan_name:
-            mesh_vertices = np.load(os.path.join(self._dense_pcd_dir, scan_name) + "_aligned_vert.npy")
-            point_cloud = mesh_vertices[:, 0:6]
-            
-            point_cloud[:, 3:] = (point_cloud[:, 3:] - np.array([109.8, 97.2, 83.8])) / 256.0
-            
-            normals = mesh_vertices[:,6:9]
-            point_cloud = np.concatenate([point_cloud, normals], 1)
-            
-            floor_height = np.percentile(point_cloud[:, 2], 0.99)
-            height = point_cloud[:, 2] - floor_height
-            point_cloud = np.concatenate([point_cloud, np.expand_dims(height, 1)], 1)
-            
-            pcd = torch.FloatTensor(point_cloud).cuda().half()
-            batch_pcd.append(pcd)
+            if scan_name in self.pcd_dict.keys():
+                batch_pcd.append(self.pcd_dict[scan_name])
+            else:
+                mesh_vertices = np.load(os.path.join(self._dense_pcd_dir, scan_name) + "_aligned_vert.npy")
+                point_cloud = mesh_vertices[:, 0:6]
+                
+                point_cloud[:, 3:] = (point_cloud[:, 3:] - np.array([109.8, 97.2, 83.8])) / 256.0
+                
+                normals = mesh_vertices[:,6:9]
+                point_cloud = np.concatenate([point_cloud, normals], 1)
+                
+                floor_height = np.percentile(point_cloud[:, 2], 0.99)
+                height = point_cloud[:, 2] - floor_height
+                point_cloud = np.concatenate([point_cloud, np.expand_dims(height, 1)], 1)
+                
+                pcd = torch.FloatTensor(point_cloud).half()
+                self.pcd_dict[scan_name] = pcd
+                batch_pcd.append(pcd)
             
         return batch_pcd
 
@@ -660,10 +720,11 @@ class DenseTokenSelection(nn.Module):
         batch_sample_pcd = []
         for scene_xyz, sample_xyz in zip(batch_scene_xyz, batch_sample_xyz):
             ## scene_xyz [N, 3] sample_xyz [SEQ_LEN, TOPK, 3]
+            scene_xyz = scene_xyz.cuda()
             scene_fts = scene_xyz[..., 3:].unsqueeze(0)
             scene_xyz = scene_xyz[..., :3].unsqueeze(0)
             seq_len, topk, _ = sample_xyz.shape
-            sample_xyz = sample_xyz.view(-1, 3).unsqueeze(0).float()
+            sample_xyz = sample_xyz.view(-1, 3).unsqueeze(0)
             idx = ball_query(
                     self._sample_nearest_pcd_radius, 
                     self._sample_nearest_pcd_npoint, 
@@ -706,9 +767,17 @@ class DenseTokenSelection(nn.Module):
         batch_topk_select_scene_token_xyz = self._retrive_topk_scene_token_from_query(qformer_attn_map, qformer_scene_token_xyz, batch_topk_query)
         batch_sample_pcd = self._sample_nearest_point_from_xyz(batch_pcd, batch_topk_select_scene_token_xyz)
         bsz, seq_len, topk, npoint, ft_dim = batch_sample_pcd.shape
+        ## 为了降低显存只能一个个来
+        # batch_sample_pcd = batch_sample_pcd.view(bsz*seq_len, topk, npoint, ft_dim).contiguous()
+        # enc_features = []
+        # for sample_pcd in batch_sample_pcd:
+        #     enc_features.append(self._run_encoder(sample_pcd.float()).half().permute(1, 0, 2))
+        # enc_features = torch.stack(enc_features, 0)
+        
+        ## BATCH 实现
         batch_sample_pcd = batch_sample_pcd.view(bsz*seq_len*topk, npoint, ft_dim).contiguous()
-        enc_features = self._run_encoder(batch_sample_pcd.float())
-        enc_features = enc_features.half().permute(1, 0, 2)
+        enc_features = self._run_encoder(batch_sample_pcd).permute(1, 0, 2)
+        
         enc_features = enc_features.view(bsz, seq_len, topk, enc_features.shape[-2], enc_features.shape[-1]).contiguous()
         # enc_xyz = enc_xyz.view(bsz, seq_len, topk, enc_xyz.shape[-2], enc_xyz.shape[-1]).contiguous()
         # enc_inds = enc_inds.view(bsz, seq_len, topk, enc_inds.shape[-1]).contiguous()
@@ -773,6 +842,7 @@ class OPTDecoderLayer(nn.Module):
             attention_mask=attention_mask,
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
+            reg_features=reg_features,
         )
         
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
@@ -1148,7 +1218,7 @@ class OPTDecoder(OPTPreTrainedModel):
             hidden_states = layer_outputs[0]
 
             ## TODO：LAYER IDX判断
-            if os.getenv('use_flex_attn') == 'True':
+            if os.getenv('use_flex_attn') == 'True' and idx >= self.config.num_hidden_layers- int(os.getenv('num_finetune_hidden_layers')) - 1:
                 reg_features = self.dense_token_selection(
                                         opt_attn_map = layer_outputs[1], 
                                         qformer_attn_map = flex_attn_info['qformer_batch_x_attn'],
@@ -1761,9 +1831,6 @@ class FlexAttention(nn.Module):
         return attn_output, attn_weights_reshaped, past_key_value, scene_token_hidden_state
 
 
-from third_party.pointnet2.pointnet2_modules import PointnetSAModuleVotes
-
-from third_party.pointnet2.pointnet2_utils import ball_query, grouping_operation
 class Dense_Region_Selector(nn.Module):
     def __init__(self, config, select_threshold=0.5):
         super().__init__()

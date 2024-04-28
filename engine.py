@@ -7,7 +7,7 @@ import utils.capeval.bleu.bleu as capblue
 import utils.capeval.cider.cider as capcider
 import utils.capeval.rouge.rouge as caprouge
 import utils.capeval.meteor.meteor as capmeteor
-
+import torch.distributed as dist
 from utils.box_util import box3d_iou_batch_tensor
 from utils.ap_calculator import APCalculator
 from utils.io import save_checkpoint
@@ -71,7 +71,7 @@ def do_train(
     
     if is_primary():
         logout(f"call with args: {args}")
-        logout(f"{model}")
+        # logout(f"{model}")
     
     curr_iter = args.start_epoch * len(dataloaders['train'])
     max_iters = args.max_epoch * len(dataloaders['train'])
@@ -258,7 +258,7 @@ def do_train(
     
     if is_primary():
         logout(f"call with args: {args}")
-        logout(f"{model}")
+        # logout(f"{model}")
     
     curr_iter = args.start_epoch * len(dataloaders['train'])
     max_iters = args.max_epoch * len(dataloaders['train'])
@@ -289,6 +289,21 @@ def do_train(
             for key in batch_data_label:
                 if not isinstance(batch_data_label[key], list):
                     batch_data_label[key] = batch_data_label[key].to(net_device)
+            
+            # max_len = 1e-9
+            # for attn_mask in batch_data_label['attention_mask']:
+            #     if attn_mask.sum() > max_len:
+            #         max_len = attn_mask.sum()
+            # if is_distributed():
+            #     seq_len_list = [torch.empty_like(max_len) for _ in range(args.ngpus)]
+            #     dist.all_gather(seq_len_list, max_len)
+            #     max_len = max(seq_len_list).item()
+            # else:
+            #     max_len = max_len.item()
+            # batch_data_label['input_ids'] = batch_data_label['input_ids'][:, :int(max_len)]
+            # batch_data_label['attention_mask'] = batch_data_label['attention_mask'][:, :int(max_len)]
+            # batch_data_label['gradient_mask'] = batch_data_label['gradient_mask'][:, :int(max_len)]
+            
     
             # Forward pass
             optimizer.zero_grad()
@@ -324,7 +339,14 @@ def do_train(
             loss.backward()
             if args.clip_gradient > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_gradient)
+                
+            # for n, p in model_no_ddp.named_parameters():
+            #     assert not torch.isnan(p).any()
+            
             optimizer.step()
+            
+            # for n, p in model_no_ddp.named_parameters():
+            #     assert not torch.isnan(p).any()
     
             time_delta.update(time.time() - curr_time)
             loss_avg.update(loss.item())
