@@ -12,7 +12,7 @@ from eval_utils.evaluate_qa import evaluate
 from datasets.task_prompts import TASK_PROPMT, BOX_FORMAT
 from tqdm import tqdm
 import utils.pc_util as pc_util
-import open3d
+# import open3d
 
 class Dataset(ScanNetBaseDataset):
     

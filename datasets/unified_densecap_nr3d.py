@@ -9,7 +9,7 @@ from transformers import AutoTokenizer
 from eval_utils.evaluate_densecap import evaluate
 from datasets.task_prompts import TASK_PROPMT, BOX_FORMAT
 from tqdm import tqdm
-import open3d
+# import open3d
 import utils.pc_util as pc_util
 
 

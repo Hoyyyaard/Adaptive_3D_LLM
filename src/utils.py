@@ -2,7 +2,7 @@ import sys
 import numpy as np
 from tqdm import tqdm
 import utils.pc_util as pc_util
-import open3d
+# import open3d
 import time
 import os
 from copy import deepcopy

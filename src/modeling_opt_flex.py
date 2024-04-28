@@ -2825,8 +2825,8 @@ class FlexOPTForCausalLM(OPTForCausalLM):
         
         
         ## visualization
-        import open3d
-        import numpy as np
+        # import open3d
+        # import numpy as np
         # sparse_vis_pcd = open3d.geometry.PointCloud()
         # sparse_vis_pcd.points = open3d.utility.Vector3dVector(xyz[0].cpu().numpy())
         # colors = np.ones_like(xyz[0].cpu().numpy()) * 0.8

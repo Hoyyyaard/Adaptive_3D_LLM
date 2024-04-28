@@ -576,34 +576,3 @@ class ScanNetBaseDataset(Dataset):
         ret_dict["scan_idx"] = np.array(idx).astype(np.int64)
         return ret_dict
 
-    ## USer debug code
-    def visualization_tgt_obj_bboxs(self, corners, pcs):
-        import open3d as o3d
-        from tqdm import tqdm
-        # 定义边框的线段，每个线段由一对角点索引定义
-        lines = [
-            [0, 1],
-            [1, 2],
-            [2, 3],
-            [3, 0],
-            [4, 5],
-            [5, 6],
-            [6, 7],
-            [7, 4],
-            [0, 4],
-            [1, 5],
-            [2, 6],
-            [3, 7]
-        ]
-        line_sets = []
-        for cor in corners:
-        # 创建一个线段集合来表示边框
-            line_sets.append(o3d.geometry.LineSet(
-                points=o3d.utility.Vector3dVector(cor),
-                lines=o3d.utility.Vector2iVector(lines)
-            ))
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(pcs[:, :3])
-        pcd.colors = o3d.utility.Vector3dVector(pcs[:, 3:6])
-        # 可视化点云和边框
-        o3d.visualization.draw_geometries([pcd, *line_sets])

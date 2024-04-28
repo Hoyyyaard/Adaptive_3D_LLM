@@ -12,7 +12,7 @@ from transformers import AutoTokenizer
 from eval_utils.evaluate_vg import evaluate
 from datasets.task_prompts import TASK_PROPMT, BOX_FORMAT
 from plyfile import PlyData, PlyElement
-import open3d
+# import open3d
 
 
 class Dataset(ScanNetBaseDataset):

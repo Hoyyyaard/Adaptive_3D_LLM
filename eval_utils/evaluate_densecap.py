@@ -330,7 +330,7 @@ def evaluate(
 
 def viusualization_preict_bbox(pcd, pred_box_corners, gt_box_corners):
     from utils.box_util import flip_axis_to_camera_np
-    import open3d
+    # import open3d
     pcd = pcd.cpu().numpy()
     pred_box_corners = pred_box_corners.cpu().numpy()
     gt_box_corners = gt_box_corners.cpu().numpy()

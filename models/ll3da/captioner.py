@@ -480,13 +480,21 @@ class captioner(nn.Module):
         instruction = inputs['instruction']             # ntoken
         instruction_mask = inputs['instruction_mask']   # ntoken
 
-        prefix_tokens, batch_x_attn = self._get_instruction_response(
+        prefix_tokens, qformer_batch_x_attn = self._get_instruction_response(
             detector_output=detector_output,
             inputs=inputs,
         )
         prefix_tokens = prefix_tokens.to(self.dtype)
         
         attentions = [None] * prefix_tokens.shape[0]
+        
+        ## 为FLEX-ATTN准备信息
+        flex_attn_info = {
+            'qformer_batch_x_attn': qformer_batch_x_attn[0].to(self.dtype),
+            'qformer_scene_token_xyz': qformer_batch_x_attn[1].to(self.dtype),
+            'scan_name': inputs['scan_name'],
+        }
+        
         
         for batch_id in range(prefix_tokens.shape[0]):
             sample_instruction = instruction[batch_id]     
