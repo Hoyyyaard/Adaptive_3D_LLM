@@ -210,7 +210,7 @@ class OPTAttention(nn.Module):
             value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
 
             ## FLEX
-            if reg_features is not None:
+            if reg_features is not None and hasattr(self, 'encoder_to_llm_projection'):
                 reg_features = self.encoder_to_llm_projection(reg_features)
                 bsz, seq_len, topk, tl, hdim = reg_features.shape
                 hr_key_value_states = reg_features.view(bsz, seq_len, topk*tl, hdim)
@@ -572,6 +572,7 @@ class DenseTokenSelection(nn.Module):
         self.encoder.interim_downsampling = self.encoder.interim_downsampling.float()
         
         self.pcd_dict = {}
+        self._preload_dense_pcd()
     
     def _build_preencoder(self, cfg):
         mlp_dims = [cfg.in_channel, 64, 128, cfg.enc_dim]
@@ -663,27 +664,55 @@ class DenseTokenSelection(nn.Module):
     
     def _get_batch_scan_dense_pcd(self, batch_scan_name):
         batch_pcd = []
+        batch_kd_tree = []
         for scan_name in batch_scan_name:
+            scan_name = scan_name.split('_')[0]
             if scan_name in self.pcd_dict.keys():
-                batch_pcd.append(self.pcd_dict[scan_name])
-            else:
-                mesh_vertices = np.load(os.path.join(self._dense_pcd_dir, scan_name) + "_aligned_vert.npy")
-                point_cloud = mesh_vertices[:, 0:6]
+                batch_pcd.append(self.pcd_dict[scan_name][0])
+                batch_kd_tree.append(self.pcd_dict[scan_name][1])
+            # else:
+            #     mesh_vertices = np.load(os.path.join(self._dense_pcd_dir, scan_name) + "_aligned_vert.npy")
+            #     point_cloud = mesh_vertices[:, 0:6]
                 
-                point_cloud[:, 3:] = (point_cloud[:, 3:] - np.array([109.8, 97.2, 83.8])) / 256.0
+            #     point_cloud[:, 3:] = (point_cloud[:, 3:] - np.array([109.8, 97.2, 83.8])) / 256.0
                 
-                normals = mesh_vertices[:,6:9]
-                point_cloud = np.concatenate([point_cloud, normals], 1)
+            #     normals = mesh_vertices[:,6:9]
+            #     point_cloud = np.concatenate([point_cloud, normals], 1)
                 
-                floor_height = np.percentile(point_cloud[:, 2], 0.99)
-                height = point_cloud[:, 2] - floor_height
-                point_cloud = np.concatenate([point_cloud, np.expand_dims(height, 1)], 1)
+            #     floor_height = np.percentile(point_cloud[:, 2], 0.99)
+            #     height = point_cloud[:, 2] - floor_height
+            #     point_cloud = np.concatenate([point_cloud, np.expand_dims(height, 1)], 1)
                 
-                pcd = torch.FloatTensor(point_cloud).half()
-                self.pcd_dict[scan_name] = pcd
-                batch_pcd.append(pcd)
+            #     pcd = torch.FloatTensor(point_cloud).half()
+            #     self.pcd_dict[scan_name] = pcd
+            #     batch_pcd.append(pcd)
             
-        return batch_pcd
+        return batch_pcd, batch_kd_tree
+    
+    def _preload_dense_pcd(self):
+        import glob
+        from tqdm import tqdm
+        from scipy.spatial import cKDTree
+        
+        all_scan_files = glob.glob(f'{self._dense_pcd_dir}/*_aligned_vert.npy')
+        for fn in tqdm(all_scan_files, desc='PRELOAD DENSE PCDS'):
+            mesh_vertices = np.load(fn)
+            scan_name = fn.split('/')[-1].split('_')[0]
+            point_cloud = mesh_vertices[:, 0:6]
+
+            point_cloud[:, 3:] = (point_cloud[:, 3:] - np.array([109.8, 97.2, 83.8])) / 256.0
+
+            normals = mesh_vertices[:,6:9]
+            point_cloud = np.concatenate([point_cloud, normals], 1)
+
+            floor_height = np.percentile(point_cloud[:, 2], 0.99)
+            height = point_cloud[:, 2] - floor_height
+            point_cloud = np.concatenate([point_cloud, np.expand_dims(height, 1)], 1)
+            
+            kd_tree = cKDTree(point_cloud[:, :3])
+            pcd = torch.FloatTensor(point_cloud).half()
+            
+            self.pcd_dict[scan_name] = (pcd, kd_tree)
 
     def _break_up_pc(self, pc):
         # pc may contain color/normals.
@@ -715,11 +744,11 @@ class DenseTokenSelection(nn.Module):
             enc_inds = torch.gather(pre_enc_inds, 1, enc_inds.long())
         return enc_features
     
-    def _sample_nearest_point_from_xyz(self, batch_scene_xyz, batch_sample_xyz):
+    def _sample_nearest_point_from_xyz(self, batch_scene_xyz, batch_kd_tree, batch_sample_xyz):
         
         batch_sample_pcd = []
         for scene_xyz, sample_xyz in zip(batch_scene_xyz, batch_sample_xyz):
-            ## scene_xyz [N, 3] sample_xyz [SEQ_LEN, TOPK, 3]
+            # scene_xyz [N, 3] sample_xyz [SEQ_LEN, TOPK, 3]
             scene_xyz = scene_xyz.cuda()
             scene_fts = scene_xyz[..., 3:].unsqueeze(0)
             scene_xyz = scene_xyz[..., :3].unsqueeze(0)
@@ -732,6 +761,30 @@ class DenseTokenSelection(nn.Module):
                     sample_xyz.float().contiguous()
                     ).long().squeeze(0)
             
+        ## USE KDTREE
+        # for scene_xyz, scene_kdt, sample_xyz in zip(batch_scene_xyz, batch_kd_tree, batch_sample_xyz):
+        #     seq_len, topk, _ = sample_xyz.shape
+        #     scene_fts = scene_xyz[..., 3:].unsqueeze(0).cuda()
+        #     scene_xyz = scene_xyz[..., :3].unsqueeze(0).cuda()
+        #     query_point = sample_xyz.view(-1, 3).cpu().numpy()
+        #     indexes_list = scene_kdt.query_ball_point(query_point, self._sample_nearest_pcd_radius)
+            
+        #     sampled_indexes_list = []
+        #     non_zero_index = [i for i in range(len(indexes_list)) if len(indexes_list[i]) > 0]
+        #     for indexes in indexes_list:
+        #         num_points_in_neighborhood = len(indexes)
+        #         if num_points_in_neighborhood == 0:
+        #             import random
+        #             indexes = indexes_list[random.choice(non_zero_index)]
+        #             num_points_in_neighborhood = len(indexes)
+        #         if num_points_in_neighborhood >= self._sample_nearest_pcd_npoint:
+        #             sampled_indexes = np.random.choice(indexes, self._sample_nearest_pcd_npoint, replace=False)
+        #         else:
+        #             sampled_indexes = np.random.choice(indexes, self._sample_nearest_pcd_npoint, replace=True)
+                    
+                    
+        #         sampled_indexes_list.append(sampled_indexes)
+        #     idx = torch.LongTensor(np.array(sampled_indexes_list)).cuda()
             # idx = idx.view(1, seq_len, topk, self._sample_nearest_pcd_npoint)
             
             ## 均匀采样
@@ -761,11 +814,14 @@ class DenseTokenSelection(nn.Module):
     
     @torch.no_grad()
     def forward(self, opt_attn_map, qformer_attn_map, qformer_scene_token_xyz, scan_name):
-        batch_pcd = self._get_batch_scan_dense_pcd(scan_name)
+        batch_pcd, batch_kd_tree = self._get_batch_scan_dense_pcd(scan_name)
         ## [BSZ, TEXT_SEQ_LEN, TOPK]
+        # time0 = time.time()
         batch_topk_query = self._retrive_topk_query_from_text(opt_attn_map)
+        # time1 = time.time()
         batch_topk_select_scene_token_xyz = self._retrive_topk_scene_token_from_query(qformer_attn_map, qformer_scene_token_xyz, batch_topk_query)
-        batch_sample_pcd = self._sample_nearest_point_from_xyz(batch_pcd, batch_topk_select_scene_token_xyz)
+        # time2 = time.time()
+        batch_sample_pcd = self._sample_nearest_point_from_xyz(batch_pcd, batch_kd_tree, batch_topk_select_scene_token_xyz)
         bsz, seq_len, topk, npoint, ft_dim = batch_sample_pcd.shape
         ## 为了降低显存只能一个个来
         # batch_sample_pcd = batch_sample_pcd.view(bsz*seq_len, topk, npoint, ft_dim).contiguous()
@@ -776,8 +832,9 @@ class DenseTokenSelection(nn.Module):
         
         ## BATCH 实现
         batch_sample_pcd = batch_sample_pcd.view(bsz*seq_len*topk, npoint, ft_dim).contiguous()
+        # time3 = time.time()
         enc_features = self._run_encoder(batch_sample_pcd).permute(1, 0, 2)
-        
+        # print(time1 - time0, time2 - time1, time3 - time2, time.time() - time3)
         enc_features = enc_features.view(bsz, seq_len, topk, enc_features.shape[-2], enc_features.shape[-1]).contiguous()
         # enc_xyz = enc_xyz.view(bsz, seq_len, topk, enc_xyz.shape[-2], enc_xyz.shape[-1]).contiguous()
         # enc_inds = enc_inds.view(bsz, seq_len, topk, enc_inds.shape[-1]).contiguous()
@@ -1218,7 +1275,7 @@ class OPTDecoder(OPTPreTrainedModel):
             hidden_states = layer_outputs[0]
 
             ## TODO：LAYER IDX判断
-            if os.getenv('use_flex_attn') == 'True' and idx >= self.config.num_hidden_layers- int(os.getenv('num_finetune_hidden_layers')) - 1:
+            if os.getenv('use_flex_attn') == 'True' and idx >= self.config.num_hidden_layers- int(os.getenv('num_finetune_hidden_layers')) - 1 and os.getenv('finetune_flex_self_attn','False') == 'True':
                 reg_features = self.dense_token_selection(
                                         opt_attn_map = layer_outputs[1], 
                                         qformer_attn_map = flex_attn_info['qformer_batch_x_attn'],

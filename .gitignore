@@ -23,3 +23,4 @@ src/openscene/results/
 src/openscene/ckpts
 None
 .vscode
+*.tar

@@ -711,7 +711,7 @@
                 "--freeze_detector",
                 "--freeze_llm",
                 "--batchsize_per_gpu", "2",
-                "--ngpus", "2",
+                "--ngpus", "1",
                 "--use_beam_search",
                 "--max_des_len", "128",
                 "--max_prompt", "1",
@@ -720,7 +720,7 @@
                 "--num_finetune_hidden_layers","8",
                 "--use_flex_attn",
                 "--finetune_flex_self_attn",
-                "--gradient_checkpoint"
+                // "--gradient_checkpoint"
 
             ],
             "env": {

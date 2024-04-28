@@ -204,6 +204,8 @@ def make_args_parser():
     if args.ll3da_token_preprocess:
         os.environ['ll3da_token_preprocess'] = 'True'
     os.environ['num_finetune_hidden_layers'] = str(args.num_finetune_hidden_layers)
+    if args.finetune_flex_self_attn:
+        os.environ['finetune_flex_self_attn'] = 'True'
     return args
 
 
@@ -321,10 +323,16 @@ def main(local_rank, args):
     config = AutoConfig.from_pretrained('ckpts/opt-model/config.json')
     model = CaptionNet(args, dataset_config, datasets['train'], config)
     
-    for li in range(config.num_hidden_layers-args.num_finetune_hidden_layers):
-        del model.captioner.transformer.model.decoder.layers[li].self_attn.k_hr_proj
-        del model.captioner.transformer.model.decoder.layers[li].self_attn.v_hr_proj
-        del model.captioner.transformer.model.decoder.layers[li].self_attn.encoder_to_llm_projection
+    if args.finetune_flex_self_attn:
+        for li in range(config.num_hidden_layers-args.num_finetune_hidden_layers):
+            del model.captioner.transformer.model.decoder.layers[li].self_attn.k_hr_proj
+            del model.captioner.transformer.model.decoder.layers[li].self_attn.v_hr_proj
+            del model.captioner.transformer.model.decoder.layers[li].self_attn.encoder_to_llm_projection
+    else:
+        for li in range(config.num_hidden_layers):
+            del model.captioner.transformer.model.decoder.layers[li].self_attn.k_hr_proj
+            del model.captioner.transformer.model.decoder.layers[li].self_attn.v_hr_proj
+            del model.captioner.transformer.model.decoder.layers[li].self_attn.encoder_to_llm_projection
     
     if args.gradient_checkpoint:
         print('Training use gradient checkpointing...')
