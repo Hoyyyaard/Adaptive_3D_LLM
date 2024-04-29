@@ -4,7 +4,8 @@ export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export OMP_NUM_THREADS=1
 
-ckpt_dir=ckpts/opt-1.3b/nipus_exp/LL3DA_FLEX/test
+ckpt_dir=ckpts/opt-1.3b/nipus_exp/LL3DA_FLEX/FLEXATTN-8LAYER-GTTOKEN
+mkdir -p ${ckpt_dir}
 python main.py \
     --use_color --use_normal \
     --detector detector_Vote2Cap_DETR \
@@ -22,11 +23,11 @@ python main.py \
     --dataset_num_workers 4 \
     --eval_every_iteration 1000000 \
     --dist_url tcp://localhost:12445 \
-    --save_every 2000 \
-    --batchsize_per_gpu 2 --ngpus 8 --base_lr 5e-3 --final_lr 5e-5 \
+    --save_every 1000000 \
+    --batchsize_per_gpu 4 --ngpus 8 --base_lr 5e-3 --final_lr 5e-5 \
     --cache_dir results/debug \
     --finetune_flex_self_attn \
     --num_finetune_hidden_layers 8 \
     --use_flex_attn --max_des_len 128 \
     --filter_name 'none' \
-    --gradient_checkpoint   >> ${ckpt_dir}/log.log
+    --use_gt_dense_token   >> ${ckpt_dir}/log.log

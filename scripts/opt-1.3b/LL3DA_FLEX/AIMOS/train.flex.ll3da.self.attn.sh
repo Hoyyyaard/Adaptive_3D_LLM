@@ -44,6 +44,7 @@ else
 fi
 
 ckpt_dir=ckpts/opt-1.3b/nipus_exp/LL3DA_FLEX/SELFATTN-8LAYER
+mkdir -p /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/Adaptive_3D_LLM/${ckpt_dir}
 cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/Adaptive_3D_LLM
     $CMD main.py \
     --use_color --use_normal \
@@ -69,4 +70,4 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/Adaptive_3D_LLM
     --num_finetune_hidden_layers 8 \
     --use_flex_attn --max_des_len 128 \
     --slurm_run    \
-    --filter_name 'none'  >> ${ckpt_dir}/log.log
+    --filter_name 'none'  >> /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/Adaptive_3D_LLM/${ckpt_dir}/log.log

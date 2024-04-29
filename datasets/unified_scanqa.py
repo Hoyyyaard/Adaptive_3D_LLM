@@ -328,10 +328,11 @@ class Dataset(ScanNetBaseDataset):
             
             ret_dict = openscene_ret_dict
         
-        ret_dict['scan_name'] = scan_name
-        ret_dict['task_name'] = 'scanqa'
-        ## TODO: 这里处理只选其中一个物体可能会导致性能下降
-        ret_dict['tgt_obj_id'] = np.array(random.choice(self.annotations[idx]['object_ids'])).astype(np.int64)
+        if self.args.preprocess_dense_token:
+            ret_dict['scan_name'] = scan_name
+            ret_dict['task_name'] = 'scanqa'
+            ## TODO: 这里处理只选其中一个物体可能会导致性能下降
+            ret_dict['tgt_obj_id'] = np.array(random.choice(self.annotations[idx]['object_ids'])).astype(np.int64)
         
         ## 为LL3DA-FLEX准备每个EPISODE的GT DENSE TOKEN
         if self.args.use_gt_dense_token:
