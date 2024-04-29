@@ -372,6 +372,7 @@ class captioner(nn.Module):
             'qformer_batch_x_attn': qformer_batch_x_attn[0].to(self.dtype),
             'qformer_scene_token_xyz': qformer_batch_x_attn[1].to(self.dtype),
             'scan_name': inputs['scan_name'],
+            'flex_gt_dense_token': inputs.get('flex_gt_dense_token', None)
         }
         
         # ---- calculate transformer loss

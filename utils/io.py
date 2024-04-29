@@ -56,7 +56,8 @@ def resume_if_possible(checkpoint_dir, model_no_ddp, optimizer):
     best_val_metrics = sd["best_val_metrics"]
     print(f"Found checkpoint at {epoch}. Resuming.")
 
-    model_no_ddp.load_state_dict(sd["model"], strict=False)
+    resume_msg = model_no_ddp.load_state_dict(sd["model"], strict=False)
+    print('resume_msg: ',resume_msg)
     optimizer.load_state_dict(sd["optimizer"])
     print(
         f"Loaded model and optimizer state at {epoch}. Loaded best val metrics so far."

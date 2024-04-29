@@ -403,6 +403,14 @@ class Dataset(ScanNetBaseDataset):
             del openscene_ret_dict['openscene_instance_labels']
             ret_dict = openscene_ret_dict
         ret_dict['scan_name'] = scan_name
+        ret_dict['task_name'] = 'scanrefer'
+        ret_dict['tgt_obj_id'] = np.array(self.annotations[idx]['object_id']).astype(np.int64)
+
+        ## 为LL3DA-FLEX准备每个EPISODE的GT DENSE TOKEN
+        if self.args.use_gt_dense_token:
+            cache_dir = f"results/process_datasets/ll3da_flex_gt_dense_token/{self.split_set}/scanrefer/{scan_name.split('_')[0]}/{idx}.pt"
+            flex_gt_dense_token = torch.load(cache_dir, map_location='cpu').numpy().astype(np.float32)
+            ret_dict['flex_gt_dense_token'] = flex_gt_dense_token
         
         return ret_dict
    

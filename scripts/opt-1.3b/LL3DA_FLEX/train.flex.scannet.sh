@@ -4,6 +4,7 @@ export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export OMP_NUM_THREADS=1
 
+ckpt_dir=ckpts/opt-1.3b/nipus_exp/LL3DA_FLEX/test
 python main.py \
     --use_color --use_normal \
     --detector detector_Vote2Cap_DETR \
@@ -13,7 +14,7 @@ python main.py \
     --vocab facebook/opt-1.3b \
     --qformer_vocab bert-base-embedding \
     --pretrained_weights pretrained/vote2cap-detr/scannet_vote2cap_detr_XYZ_COLOR_NORMAL.pth \
-    --checkpoint_dir ckpts/opt-1.3b/nipus_exp/LL3DA_FLEX/test \
+    --checkpoint_dir ${ckpt_dir} \
     --max_epoch 32 \
     --freeze_llm \
     --freeze_detector \
@@ -27,5 +28,5 @@ python main.py \
     --finetune_flex_self_attn \
     --num_finetune_hidden_layers 8 \
     --use_flex_attn --max_des_len 128 \
-    --filter_name '' \
-    --gradient_checkpoint \
+    --filter_name 'none' \
+    --gradient_checkpoint   >> ${ckpt_dir}/log.log

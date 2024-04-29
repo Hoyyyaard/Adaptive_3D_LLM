@@ -43,6 +43,7 @@ else
     CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -m torch.distributed.launch  --nproc_per_node=$NUM_GPUS_PER_NODE --master_port=$MASTER_PORT"
 fi
 
+ckpt_dir=ckpts/opt-1.3b/nipus_exp/LL3DA_FLEX/SELFATTN-8LAYER
 cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/Adaptive_3D_LLM
     $CMD main.py \
     --use_color --use_normal \
@@ -53,19 +54,19 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/Adaptive_3D_LLM
     --vocab facebook/opt-1.3b \
     --qformer_vocab bert-base-embedding \
     --pretrained_weights pretrained/vote2cap-detr/scannet_vote2cap_detr_XYZ_COLOR_NORMAL.pth \
-    --checkpoint_dir ckpts/opt-1.3b/nipus_exp/LL3DA_FLEX/SELFATTN-8LAYER \
+    --checkpoint_dir ${ckpt_dir} \
     --max_epoch 32 \
     --freeze_llm \
     --freeze_detector \
     --criterion "CiDEr" \
     --dataset_num_workers 4 \
-    --eval_every_iteration 5000 \
+    --eval_every_iteration 100000000 \
     --dist_url tcp://localhost:12445 \
-    --save_every 5000 \
+    --save_every 100000000 \
     --batchsize_per_gpu 8 --ngpus 4 --base_lr 1e-4 --final_lr 1e-6 \
     --cache_dir results/debug \
     --only_finetune_self_attn \
     --num_finetune_hidden_layers 8 \
     --use_flex_attn --max_des_len 128 \
     --slurm_run    \
-    --filter_name ''  #>> $NODE_RANK.log
+    --filter_name 'none'  >> ${ckpt_dir}/log.log

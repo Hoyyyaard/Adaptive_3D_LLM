@@ -57,7 +57,6 @@ class Dataset(ScanNetBaseDataset):
             use_random_cuboid=False,
             random_cuboid_min_points=None,
         )
-        
         self.args = args
         self.task_name = 'nr3d'
         self.grid_size_3d = args.grid_size_3d
@@ -171,7 +170,6 @@ class Dataset(ScanNetBaseDataset):
     def __getitem__(self, idx):
         
         scan_name = self.annotations[idx]['scene_id']
-
         task_name = self.annotations[idx]['task_name']
         ret_dict = self._get_scan_data(scan_name)
         
@@ -349,7 +347,14 @@ class Dataset(ScanNetBaseDataset):
             del openscene_ret_dict['openscene_instance_labels']
             ret_dict = openscene_ret_dict
         ret_dict['scan_name'] = scan_name
+        ret_dict['task_name'] = 'nr3d'
+        ret_dict['tgt_obj_id'] = np.array(self.annotations[idx]['object_id']).astype(np.int64)
         
+            ## 为LL3DA-FLEX准备每个EPISODE的GT DENSE TOKEN
+        if self.args.use_gt_dense_token:
+            cache_dir = f"results/process_datasets/ll3da_flex_gt_dense_token/{self.split_set}/nr3d/{scan_name.split('_')[0]}/{idx}.pt"
+            flex_gt_dense_token = torch.load(cache_dir, map_location='cpu').numpy().astype(np.float32)
+            ret_dict['flex_gt_dense_token'] = flex_gt_dense_token
         
         return ret_dict
    

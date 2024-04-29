@@ -205,6 +205,58 @@ def do_train(
             best_val_metrics,
             filename="checkpoint.pth",
         )
+        
+        save_checkpoint(
+            args.checkpoint_dir,
+            model_no_ddp,
+            optimizer,
+            curr_epoch,
+            args,
+            best_val_metrics,
+            filename=f"checkpoint_{(curr_epoch + 1)}epoch.pth",
+        )
+        
+        eval_metrics = {}
+        model.eval()
+        for test_loader in dataloaders['test']:
+            task_metrics = test_loader.dataset.eval_func(
+                args,
+                curr_epoch,
+                model,
+                dataset_config,
+                test_loader,
+                logout,
+                curr_train_iter=curr_iter
+            )
+            eval_metrics.update(task_metrics)
+            if is_primary():
+                logout(
+                    f"Epoch [{curr_epoch}/{args.max_epoch}] "
+                    f"saved current best val checkpoint at {filename}; "
+                    f"{args.criterion} {eval_metrics[args.criterion]}"
+                )
+        model.train()
+        
+        if not best_val_metrics or (
+            best_val_metrics[args.criterion] < eval_metrics[args.criterion]
+        ):
+            best_val_metrics = eval_metrics
+            filename = "checkpoint_best.pth"
+            save_checkpoint(
+                args.checkpoint_dir,
+                model_no_ddp,
+                optimizer,
+                curr_epoch,
+                args,
+                best_val_metrics,
+                filename="checkpoint_best.pth",
+            )
+            if is_primary():
+                logout(
+                    f"Epoch [{curr_epoch}/{args.max_epoch}] "
+                    f"saved current best val checkpoint at {filename}; "
+                    f"{args.criterion} {eval_metrics[args.criterion]}"
+                )
     
     # end of training
     eval_metrics = {}
@@ -273,6 +325,16 @@ def do_train(
     max_tolerant_nan = 4
     curr_nan_times = 0
     
+    if args.preprocess_dense_token:
+        import copy
+        tokenizer = copy.deepcopy(model_no_ddp.detector.tokenizer)
+        sample_point = int(model_no_ddp.captioner.transformer.model.decoder.dense_token_selection._preenc_npoints * \
+                            model_no_ddp.captioner.transformer.model.decoder.dense_token_selection._query_topk * \
+                            model_no_ddp.captioner.transformer.model.decoder.dense_token_selection._scene_token_topk)
+        tokenizer.npoints = sample_point * 2
+        encoder = copy.deepcopy(model_no_ddp.detector.encoder)
+        encoder.interim_downsampling.npoint = sample_point
+
     for curr_epoch in tqdm(range(args.start_epoch, args.max_epoch)):
         
         if is_distributed():
@@ -308,16 +370,61 @@ def do_train(
             # Forward pass
             optimizer.zero_grad()
     
-            if args.ll3da_token_preprocess:
-                outputs = model(batch_data_label, is_eval=False, task_name='preprocess')
+            if args.preprocess_dense_token:
+                def _break_up_pc(pc):
+                    # pc may contain color/normals.
+                    xyz = pc[..., 0:3].contiguous()
+                    features = pc[..., 3:].transpose(1, 2).contiguous() if pc.size(-1) > 3 else None
+                    return xyz, features
                 
-                scan_name = batch_data_label['scan_name'][0]
-                op_dir = '/mnt/nfs/share/Adaptive/ll3da_scene_token'
-                os.makedirs(f'{op_dir}/{scan_name}', exist_ok=True)
-                
-                torch.save(outputs['enc_features'], os.path.join(op_dir, scan_name ,'enc_features.pt'))
-                torch.save(outputs['enc_xyz'], os.path.join(op_dir, scan_name ,'enc_xyz.pt'))
-                
+                def _run_encoder(point_clouds, inds=None):
+                    xyz, features = _break_up_pc(point_clouds)
+                    
+                    ## pointcloud tokenization
+                    # xyz: batch x npoints x 3
+                    # features: batch x channel x npoints
+                    # inds: batch x npoints
+                    pre_enc_xyz, pre_enc_features, pre_enc_inds = tokenizer(xyz, features, inds)
+
+                    # nn.MultiHeadAttention in encoder expects npoints x batch x channel features
+                    pre_enc_features = pre_enc_features.permute(2, 0, 1)
+
+                    # xyz points are in batch x npointx channel order
+                    enc_xyz, enc_features, enc_inds = encoder(
+                        pre_enc_features, xyz=pre_enc_xyz
+                    )
+                    if enc_inds is None:
+                        # encoder does not perform any downsampling
+                        enc_inds = pre_enc_inds
+                    else:
+                        # use gather here to ensure that it works for both FPS and random sampling
+                        enc_inds = torch.gather(pre_enc_inds, 1, enc_inds.long())
+                    return enc_features
+
+                base_cache_dir = 'results/process_datasets/ll3da_flex_gt_dense_token'
+                ## STEP1: CROP出GT相关的点云
+                for bsz in range(batch_data_label['point_clouds'].shape[0]):
+                    scan_name = batch_data_label['scan_name'][bsz].split('_')[0]
+                    task_name = batch_data_label['task_name'][bsz]
+                    ## 获得稠密的点云和标签
+                    pointclouds = model_no_ddp.captioner.transformer.model.decoder.dense_token_selection.pcd_dict[scan_name][0].cpu().numpy()
+                    pcd = pointclouds[:,:3]
+                    instance_label = model_no_ddp.captioner.transformer.model.decoder.dense_token_selection.pcd_dict[scan_name][2]
+                    tgt_related_pcd = pointclouds[instance_label == batch_data_label['tgt_obj_id'][bsz].item()+1]
+
+                    ## 采样TOKEN
+                    tgt_related_pcd = torch.from_numpy(tgt_related_pcd).float().cuda()
+                    tgt_related_pcd = tgt_related_pcd.unsqueeze(0)
+
+                    scan_idx = batch_data_label['scan_idx'][bsz].item()
+
+                    ## STEP2：采样TOKEN
+                    ## STEP3: 生成TOKEN的特征
+                    reg_features = _run_encoder(tgt_related_pcd).permute(1, 0, 2)
+                    save_p = os.path.join(base_cache_dir, 'val', task_name, scan_name, f'{scan_idx}.pt')
+                    os.makedirs(os.path.dirname(save_p), exist_ok=True)
+                    torch.save(reg_features, save_p)
+
                 continue
     
             outputs = model(batch_data_label, is_eval=False)

@@ -31,7 +31,7 @@ def make_args_parser():
     )
     # DISABLE warmup learning rate during dense caption training
     parser.add_argument("--warm_lr", default=1e-6, type=float)
-    parser.add_argument("--warm_lr_epochs", default=9, type=int)
+    parser.add_argument("--warm_lr_epochs", default=1, type=int)
     # only ACTIVATE during dense caption training
     parser.add_argument("--pretrained_params_lr", default=None, type=float)
     parser.add_argument("--pretrained_weights", default=None, type=str)
@@ -157,10 +157,10 @@ def make_args_parser():
     parser.add_argument("--ll3da_opt_attn_output", action='store_true')
     ## 用于FLEX-LL3DA
     parser.add_argument("--use_flex_attn", action='store_true')    
-    ## 用于预处理LL3DA的detector输入和DENSE TOKEN
-    parser.add_argument("--ll3da_token_preprocess", action='store_true')
-    ## 指定模型类型，如果训练LLM只能用FP16
-    parser.add_argument("--FP16", action='store_true')
+    ## 用于预处理每个EPISODE相关的DENSE TOKEN
+    parser.add_argument("--preprocess_dense_token", action='store_true')
+    ## 在LL3DA的FLEX ATTN中使用GT的DENSE SCENE TOKEN
+    parser.add_argument("--use_gt_dense_token", action='store_true')
     
     ## SLURM RUN
     parser.add_argument("--slurm_run", action='store_true')
@@ -200,16 +200,19 @@ def make_args_parser():
     print('============== FLEX-LL3DA =====================')
     print(f'll3da_opt_attn_output: ', args.ll3da_opt_attn_output)
     print(f'use_flex_attn: ', args.use_flex_attn)
-    print(f'll3da_token_preprocess: ', args.ll3da_token_preprocess)
+    print(f'preprocess_dense_token: ', args.preprocess_dense_token)
+    print(f'use_gt_dense_token: ', args.use_gt_dense_token)
     if args.ll3da_opt_attn_output:
         os.environ['ll3da_opt_attn_output'] = 'True'
     if args.use_flex_attn:
         os.environ['use_flex_attn'] = 'True'
-    if args.ll3da_token_preprocess:
-        os.environ['ll3da_token_preprocess'] = 'True'
+    if args.preprocess_dense_token:
+        os.environ['preprocess_dense_token'] = 'True'
     os.environ['num_finetune_hidden_layers'] = str(args.num_finetune_hidden_layers)
     if args.finetune_flex_self_attn:
         os.environ['finetune_flex_self_attn'] = 'True'
+    if args.use_gt_dense_token:
+        os.environ['use_gt_dense_token'] = 'True'
     return args
 
 
@@ -298,7 +301,7 @@ def build_dataset(args):
 def main(local_rank, args):
     
     if args.slurm_run:
-        local_rank = init_slurm_distributed()
+        init_slurm_distributed(local_rank)
     
     else:
         if args.ngpus > 1:
@@ -404,10 +407,12 @@ def main(local_rank, args):
                     if k.find('detector.tokenizer.') != -1:
                         new_checkpoint['model'][k.replace('detector.tokenizer.', 'captioner.transformer.model.decoder.dense_token_selection.tokenizer.')] = v
                     if k.find('detector.encoder.') != -1:
-                        new_checkpoint['model'][k.replace('detector.encoder.', 'captioner.transformer.model.decoder.dense_token_selection.encoder.')] = v
+                        new_checkpoint['model'][k.replace('detector.encoder.', 'captioner.transformer.model.decoder.dense_token_selection.encoder.')] = v 
+
                 checkpoint = new_checkpoint
                 
             msg = model.load_state_dict(checkpoint['model'], strict=False)
+            # if is_primary():
             print(msg)
             
             # print('====                                          ====')
@@ -473,12 +478,13 @@ def main(local_rank, args):
             else:
                 raise NotImplementedError
             
-            print('====                                          ====')
-            print('====  Only training the following parameters  ====')
-            print('====                                          ====')
-            for name, param in model_no_ddp.named_parameters():
-                if param.requires_grad is True:
-                    print('\t', name, param.shape)
+            if is_primary():
+                print('====                                          ====')
+                print('====  Only training the following parameters  ====')
+                print('====                                          ====')
+                for name, param in model_no_ddp.named_parameters():
+                    if param.requires_grad is True:
+                        print('\t', name, param.shape)
             
             loaded_epoch, best_val_metrics = resume_if_possible(
                 args.checkpoint_dir, model_no_ddp, optimizer

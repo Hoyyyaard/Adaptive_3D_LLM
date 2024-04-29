@@ -306,8 +306,10 @@ class OPTAttention(nn.Module):
             # make sure that attn_weights keeps its gradient.
             # In order to do so, attn_weights have to be reshaped
             # twice and have to be reused in the following
+            ## DROP HR ATTN HERE
             attn_weights_reshaped = attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
             attn_weights = attn_weights_reshaped.view(bsz * self.num_heads, tgt_len, src_len)
+            attn_weights_reshaped = attn_weights_reshaped[..., :tgt_len]
         else:
             attn_weights_reshaped = None
 
@@ -329,6 +331,7 @@ class OPTAttention(nn.Module):
         attn_output = attn_output.reshape(bsz, tgt_len, self.embed_dim)
 
         attn_output = self.out_proj(attn_output)
+
 
         return attn_output, attn_weights_reshaped, past_key_value
 
@@ -697,6 +700,9 @@ class DenseTokenSelection(nn.Module):
         all_scan_files = glob.glob(f'{self._dense_pcd_dir}/*_aligned_vert.npy')
         for fn in tqdm(all_scan_files, desc='PRELOAD DENSE PCDS'):
             mesh_vertices = np.load(fn)
+
+            instance_labels = np.load(fn.replace('_aligned_vert.npy', '_ins_label.npy'))
+
             scan_name = fn.split('/')[-1].split('_')[0]
             point_cloud = mesh_vertices[:, 0:6]
 
@@ -711,8 +717,8 @@ class DenseTokenSelection(nn.Module):
             
             kd_tree = cKDTree(point_cloud[:, :3])
             pcd = torch.FloatTensor(point_cloud).half()
-            
-            self.pcd_dict[scan_name] = (pcd, kd_tree)
+
+            self.pcd_dict[scan_name] = (pcd, kd_tree, instance_labels)
 
     def _break_up_pc(self, pc):
         # pc may contain color/normals.
@@ -813,32 +819,40 @@ class DenseTokenSelection(nn.Module):
         return batch_sample_pcd
     
     @torch.no_grad()
-    def forward(self, opt_attn_map, qformer_attn_map, qformer_scene_token_xyz, scan_name):
-        batch_pcd, batch_kd_tree = self._get_batch_scan_dense_pcd(scan_name)
-        ## [BSZ, TEXT_SEQ_LEN, TOPK]
-        # time0 = time.time()
-        batch_topk_query = self._retrive_topk_query_from_text(opt_attn_map)
-        # time1 = time.time()
-        batch_topk_select_scene_token_xyz = self._retrive_topk_scene_token_from_query(qformer_attn_map, qformer_scene_token_xyz, batch_topk_query)
-        # time2 = time.time()
-        batch_sample_pcd = self._sample_nearest_point_from_xyz(batch_pcd, batch_kd_tree, batch_topk_select_scene_token_xyz)
-        bsz, seq_len, topk, npoint, ft_dim = batch_sample_pcd.shape
-        ## 为了降低显存只能一个个来
-        # batch_sample_pcd = batch_sample_pcd.view(bsz*seq_len, topk, npoint, ft_dim).contiguous()
-        # enc_features = []
-        # for sample_pcd in batch_sample_pcd:
-        #     enc_features.append(self._run_encoder(sample_pcd.float()).half().permute(1, 0, 2))
-        # enc_features = torch.stack(enc_features, 0)
-        
-        ## BATCH 实现
-        batch_sample_pcd = batch_sample_pcd.view(bsz*seq_len*topk, npoint, ft_dim).contiguous()
-        # time3 = time.time()
-        enc_features = self._run_encoder(batch_sample_pcd).permute(1, 0, 2)
-        # print(time1 - time0, time2 - time1, time3 - time2, time.time() - time3)
-        enc_features = enc_features.view(bsz, seq_len, topk, enc_features.shape[-2], enc_features.shape[-1]).contiguous()
-        # enc_xyz = enc_xyz.view(bsz, seq_len, topk, enc_xyz.shape[-2], enc_xyz.shape[-1]).contiguous()
-        # enc_inds = enc_inds.view(bsz, seq_len, topk, enc_inds.shape[-1]).contiguous()
-        torch.cuda.empty_cache()
+    def forward(self, opt_attn_map, qformer_attn_map, qformer_scene_token_xyz, scan_name, flex_gt_dense_token=None):
+        if os.getenv('use_gt_dense_token','False') == 'True':
+            seq_len = opt_attn_map.shape[-2] - 32
+            ## flex_gt_dense_token : [BS, self._query_topk * self._scene_token_topk*self._preenc_npoints, 1, 256]
+            enc_features = flex_gt_dense_token.half().repeat(1, seq_len, 1, 1)
+            enc_features = enc_features.view(opt_attn_map.shape[0], seq_len, self._query_topk*self._scene_token_topk, self._preenc_npoints, 256)
+
+        else:
+            batch_pcd, batch_kd_tree = self._get_batch_scan_dense_pcd(scan_name)
+            ## [BSZ, TEXT_SEQ_LEN, TOPK]
+            # time0 = time.time()
+            batch_topk_query = self._retrive_topk_query_from_text(opt_attn_map)
+            # time1 = time.time()
+            batch_topk_select_scene_token_xyz = self._retrive_topk_scene_token_from_query(qformer_attn_map, qformer_scene_token_xyz, batch_topk_query)
+            # time2 = time.time()
+            batch_sample_pcd = self._sample_nearest_point_from_xyz(batch_pcd, batch_kd_tree, batch_topk_select_scene_token_xyz)
+            bsz, seq_len, topk, npoint, ft_dim = batch_sample_pcd.shape
+            ## 为了降低显存只能一个个来
+            # batch_sample_pcd = batch_sample_pcd.view(bsz*seq_len, topk, npoint, ft_dim).contiguous()
+            # enc_features = []
+            # for sample_pcd in batch_sample_pcd:
+            #     enc_features.append(self._run_encoder(sample_pcd.float()).half().permute(1, 0, 2))
+            # enc_features = torch.stack(enc_features, 0)
+            
+            ## BATCH 实现
+            batch_sample_pcd = batch_sample_pcd.view(bsz*seq_len*topk, npoint, ft_dim).contiguous()
+            # time3 = time.time()
+            enc_features = self._run_encoder(batch_sample_pcd).permute(1, 0, 2)
+            # print(time1 - time0, time2 - time1, time3 - time2, time.time() - time3)
+            ## [BSZ, 128, self._query_topk * self._scene_token_topk, self._preenc_npoints, 256]
+            enc_features = enc_features.view(bsz, seq_len, topk, enc_features.shape[-2], enc_features.shape[-1]).contiguous()
+            # enc_xyz = enc_xyz.view(bsz, seq_len, topk, enc_xyz.shape[-2], enc_xyz.shape[-1]).contiguous()
+            # enc_inds = enc_inds.view(bsz, seq_len, topk, enc_inds.shape[-1]).contiguous()
+            torch.cuda.empty_cache()
         return enc_features
 
 class OPTDecoderLayer(nn.Module):
@@ -1281,6 +1295,7 @@ class OPTDecoder(OPTPreTrainedModel):
                                         qformer_attn_map = flex_attn_info['qformer_batch_x_attn'],
                                         qformer_scene_token_xyz = flex_attn_info['qformer_scene_token_xyz'],
                                         scan_name = flex_attn_info['scan_name'],
+                                        flex_gt_dense_token = flex_attn_info['flex_gt_dense_token']
                                         )
             
             

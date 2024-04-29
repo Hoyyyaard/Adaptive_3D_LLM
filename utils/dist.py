@@ -68,6 +68,7 @@ def init_slurm_distributed(local_rank):
     """
     Initialize the distributed environment from SLURM
     """
+    torch.cuda.set_device(local_rank)
     proc_id = int(os.environ["SLURM_PROCID"])
     ntasks = int(os.environ["SLURM_NTASKS"])
     node_list = os.environ["SLURM_NODELIST"]
