@@ -27,4 +27,5 @@ python main.py \
     --finetune_flex_self_attn \
     --num_finetune_hidden_layers 8 \
     --use_flex_attn --max_des_len 128 \
+    --filter_name '' \
     --gradient_checkpoint \

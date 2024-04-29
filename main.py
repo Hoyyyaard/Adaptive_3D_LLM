@@ -164,6 +164,7 @@ def make_args_parser():
     
     ## SLURM RUN
     parser.add_argument("--slurm_run", action='store_true')
+    parser.add_argument("--local_rank", type=int)
     
     args = parser.parse_args()
     args.use_height = not args.no_height
@@ -327,6 +328,15 @@ def main(local_rank, args):
     
     ### build datasets and dataloaders
     dataset_config, datasets, dataloaders = build_dataset(args)
+    if args.use_flex_attn:
+        filter_test_dataset = []
+        filter_test_dataloader = []
+        for i in range(len(datasets['test'])):
+            if datasets['test'][i].task_name == 'scanqa':
+                filter_test_dataset.append(datasets['test'][i])
+                filter_test_dataloader.append(dataloaders['test'][i])
+        datasets['test'] = filter_test_dataset
+        dataloaders['test'] = filter_test_dataloader
     config = AutoConfig.from_pretrained('ckpts/opt-model/config.json')
     model = CaptionNet(args, dataset_config, datasets['train'], config)
     
@@ -394,7 +404,7 @@ def main(local_rank, args):
                     if k.find('detector.tokenizer.') != -1:
                         new_checkpoint['model'][k.replace('detector.tokenizer.', 'captioner.transformer.model.decoder.dense_token_selection.tokenizer.')] = v
                     if k.find('detector.encoder.') != -1:
-                        new_checkpoint['model'][k.replace('detector.tokenizer.', 'captioner.transformer.model.decoder.dense_token_selection.encoder.')] = v
+                        new_checkpoint['model'][k.replace('detector.encoder.', 'captioner.transformer.model.decoder.dense_token_selection.encoder.')] = v
                 checkpoint = new_checkpoint
                 
             msg = model.load_state_dict(checkpoint['model'], strict=False)
@@ -776,7 +786,7 @@ def launch_distributed(args):
     world_size = args.ngpus
     main_func = main if not args.finetune_flex_opt else finetune_flex_opt_main
     if args.slurm_run:
-        main_func(-1, args)
+        main_func(args.local_rank, args)
     else:
         if world_size == 1:
             main_func(local_rank=0, args=args)

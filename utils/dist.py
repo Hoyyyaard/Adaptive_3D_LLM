@@ -64,7 +64,7 @@ def init_distributed(gpu_id, global_rank, world_size, dist_url, dist_backend):
     torch.distributed.barrier()
     setup_print_for_distributed(is_primary())
     
-def init_slurm_distributed():
+def init_slurm_distributed(local_rank):
     """
     Initialize the distributed environment from SLURM
     """
@@ -73,24 +73,26 @@ def init_slurm_distributed():
     node_list = os.environ["SLURM_NODELIST"]
     dist_backend = "nccl"
     num_gpus = torch.cuda.device_count()
-    addr = subprocess.getoutput(f"scontrol show hostname {node_list} | head -n1")
-    # specify master port
-    if "MASTER_PORT" in os.environ:
-        pass  # use MASTER_PORT in the environment variable
-    else:
-        os.environ["MASTER_PORT"] = "29500"
-    if "MASTER_ADDR" not in os.environ:
-        os.environ["MASTER_ADDR"] = addr
+    # addr = subprocess.getoutput(f"scontrol show hostname {node_list} | head -n1")
+    # # specify master port
+    # if "MASTER_PORT" in os.environ:
+    #     pass  # use MASTER_PORT in the environment variable
+    # else:
+    #     os.environ["MASTER_PORT"] = "29500"
+    # if "MASTER_ADDR" not in os.environ:
+    #     os.environ["MASTER_ADDR"] = addr
     os.environ["WORLD_SIZE"] = str(ntasks)
-    os.environ["LOCAL_RANK"] = str(proc_id % num_gpus)
+    os.environ["LOCAL_RANK"] = str(local_rank)
     os.environ["RANK"] = str(proc_id)
-    print(f"local rank: {str(proc_id % num_gpus)}, global rank: {str(proc_id)}, world size: {num_gpus}")
+    port = os.environ["MASTER_PORT"]
+    addr = os.environ["MASTER_ADDR"]
+    print(f"local rank: {str(local_rank)}, global rank: {(proc_id*num_gpus)+local_rank}, world size: {ntasks * num_gpus}, node: {ntasks}, port: {port}, addr: {addr}")
     torch.distributed.init_process_group(
-        backend=dist_backend, rank=proc_id, world_size=ntasks
+        backend=dist_backend, rank=(proc_id*num_gpus)+local_rank, world_size=ntasks * num_gpus
     )
     torch.distributed.barrier()
+    return (proc_id*num_gpus)+local_rank
 
-    return int(proc_id % num_gpus)
 
 def all_reduce_sum(tensor):
     if not is_distributed():

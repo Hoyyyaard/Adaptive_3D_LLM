@@ -621,7 +621,7 @@
                 "--detector", "detector_Vote2Cap_DETR",
                 "--captioner", "ll3da",
                 "--test_ckpt", "ckpts/ll3da/ll3da-opt-1.3b.pth",
-                "--dataset", "unified_scanqa",
+                "--dataset", "unified_scanqa,unified_densecap_scanrefer,unified_densecap_nr3d,unified_3dllm_embodied_dialogue,unified_3dllm_embodied_planning,unified_3dllm_scene_description",
                 "--checkpoint_dir","results/debug",
                 "--pretrained_weights", "pretrained/vote2cap-detr/scannet_vote2cap_detr_XYZ_COLOR_NORMAL.pth",
                 "--vocab", "facebook/opt-1.3b",
