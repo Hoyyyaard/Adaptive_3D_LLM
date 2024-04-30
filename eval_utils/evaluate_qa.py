@@ -159,8 +159,8 @@ def evaluate(
         
         sample_index = batch_data_label['scan_idx'].cpu().tolist()
         gt_answers = [annotations[sample_index[idx]]['answers'] for idx in range(output_ids.shape[0])]
-        print(f"GT: {gt_answers}")
-        print(f"Pred: {answers}")
+        # print(f"GT: {gt_answers}")
+        # print(f"Pred: {answers}")
         for idx in range(output_ids.shape[0]):
             anno = annotations[sample_index[idx]]
             key = '-'.join((anno['question_id'], anno['question']))

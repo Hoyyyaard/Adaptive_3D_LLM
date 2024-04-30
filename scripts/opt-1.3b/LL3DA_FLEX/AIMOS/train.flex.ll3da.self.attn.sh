@@ -43,7 +43,7 @@ else
     CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch  --nproc_per_node=$NUM_GPUS_PER_NODE --master_port=$MASTER_PORT"
 fi
 
-ckpt_dir=ckpts/opt-1.3b/nipus_exp/LL3DA_FLEX/SELFATTN-8LAYER
+ckpt_dir=ckpts/opt-1.3b/nipus_exp/LL3DA_FLEX/SELFATTN-8LAYER-SCANNET
 mkdir -p /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/Adaptive_3D_LLM/${ckpt_dir}
 cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/Adaptive_3D_LLM
     $CMD main.py \
@@ -51,7 +51,7 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/Adaptive_3D_LLM
     --detector detector_Vote2Cap_DETR \
     --captioner ll3da \
     --warm_lr_epochs 1 \
-    --dataset unified_scanqa,unified_densecap_scanrefer,unified_densecap_nr3d,unified_3dllm_embodied_dialogue,unified_3dllm_embodied_planning,unified_3dllm_scene_description \
+    --dataset unified_scanqa,unified_densecap_scanrefer,unified_densecap_nr3d \
     --vocab facebook/opt-1.3b \
     --qformer_vocab bert-base-embedding \
     --pretrained_weights pretrained/vote2cap-detr/scannet_vote2cap_detr_XYZ_COLOR_NORMAL.pth \
