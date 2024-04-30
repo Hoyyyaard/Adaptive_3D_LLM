@@ -4,7 +4,7 @@ export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export OMP_NUM_THREADS=1
 
-ckpt_dir=ckpts/opt-1.3b/nipus_exp/LL3DA_FLEX/FLEXATTN-8LAYER-GTTOKEN-SCANNET
+ckpt_dir=ckpts/opt-1.3b/nipus_exp/LL3DA_FLEX/FLEXATTN-8LAYER-GTTOKEN-SCANNET-EVALWOGT
 mkdir -p ${ckpt_dir}
 python -u main.py \
     --use_color --use_normal \

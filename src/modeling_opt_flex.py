@@ -820,7 +820,7 @@ class DenseTokenSelection(nn.Module):
     
     @torch.no_grad()
     def forward(self, opt_attn_map, qformer_attn_map, qformer_scene_token_xyz, scan_name, flex_gt_dense_token=None):
-        if os.getenv('use_gt_dense_token','False') == 'True':
+        if os.getenv('use_gt_dense_token','False') == 'True' and self.training:
             seq_len = opt_attn_map.shape[-2] - 32
             ## flex_gt_dense_token : [BS, self._query_topk * self._scene_token_topk*self._preenc_npoints, 1, 256]
             enc_features = flex_gt_dense_token.half().repeat(1, seq_len, 1, 1)

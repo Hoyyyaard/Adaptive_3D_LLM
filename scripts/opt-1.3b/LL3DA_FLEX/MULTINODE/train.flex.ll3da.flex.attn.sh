@@ -1,51 +1,33 @@
 export PYTHONWARNINGS='ignore:semaphore_tracker:UserWarning'
-# export CUDA_VISIBLE_DEVICES=2,3,5,6,4,0,7,1
+export CUDA_VISIBLE_DEVICES=2,3,5,6,4,0,1
 # export MKL_NUM_THREADS=1
 # export NUMEXPR_NUM_THREADS=1
 # export OMP_NUM_THREADS=1
+
+NCCL_SOCKET_IFNAME=eno1
+NCCL_IB_DISABLE=1 
+NCCL_P2P_DISABLE=1 
+NCCL_DEBUG=INFO 
 
 RANDOM=$$
 DIV=1000
 OFFSET=24000
 MASTER_PORT=$(($RANDOM%$DIV+$OFFSET))
-NODE_RANK=${SLURM_PROCID}
-
-# if ']' is the last character of the node list
-SLURM=${SLURM_NODELIST:0:3}
-
-if [ "${SLURM_NODELIST: -1}" == "]" ]; then
-    if [ $SLURM == "npl" ]; then
-        # NPL
-        ip=${SLURM}${SLURM_NODELIST:4:2}
-    else
-        # DCS
-        ip=${SLURM}${SLURM_NODELIST:4:3}
-    fi
-    FLAG=1
-else
-    ip=$SLURM_NODELIST
-    FLAG=0
-fi
-
-NUM_GPUS_PER_NODE=$1
+NODE_RANK=0
+ip=192.168.1.49
+NUM_GPUS_PER_NODE=7
 
 echo "ip: $ip"
-echo "FLAG: $FLAG"
-echo "SLURM_NODELIST: $SLURM_NODELIST"
 echo "NODE_RANK: $NODE_RANK"
 echo "NUM_GPUS_PER_NODE: $NUM_GPUS_PER_NODE"
 echo "MASTER_PORT: $MASTER_PORT"
 
-if [ $FLAG -eq 1 ]; then
-    NUM_NODES=${2:-1}
-    CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch --nnodes=$NUM_NODES --nproc_per_node=$NUM_GPUS_PER_NODE --master_addr=$ip --node_rank=$NODE_RANK"
-else
-    CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch  --nproc_per_node=$NUM_GPUS_PER_NODE --master_port=$MASTER_PORT"
-fi
 
-ckpt_dir=ckpts/opt-1.3b/nipus_exp/LL3DA_FLEX/FLEXATTN-8LAYER-SCANNET
-mkdir -p /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/Adaptive_3D_LLM/${ckpt_dir}
-cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/Adaptive_3D_LLM
+CMD="/gpfs/u/home/LMCG/LMCGljnn/scratch/miniconda3-ppc64le/envs/ll3da/bin/python -u -m torch.distributed.launch --nnodes=$NUM_NODES --nproc_per_node=$NUM_GPUS_PER_NODE --master_addr=$ip --node_rank=$NODE_RANK"
+
+
+ckpt_dir=ckpts/opt-1.3b/nipus_exp/LL3DA_FLEX/FLEXATTN-8LAYER-SCANNET-EVALWOGT
+mkdir -p ${ckpt_dir}
     $CMD main.py \
     --use_color --use_normal \
     --detector detector_Vote2Cap_DETR \
@@ -71,4 +53,4 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/Adaptive_3D_LLM
     --use_beam_search \
     --use_flex_attn --max_des_len 128 \
     --slurm_run    \
-    --filter_name 'none'  | tee /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/Adaptive_3D_LLM/${ckpt_dir}/log.log
+    --filter_name 'none'  | tee ${ckpt_dir}/log.log
