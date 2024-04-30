@@ -710,7 +710,7 @@
                 "--captioner", "ll3da",
                 "--checkpoint_dir","results/debug/token_preprocess",
                 "--pretrained_weights", "pretrained/vote2cap-detr/scannet_vote2cap_detr_XYZ_COLOR_NORMAL.pth",
-                "--dataset", "unified_scanqa,unified_densecap_scanrefer,unified_densecap_nr3d",
+                "--dataset", "unified_scanqa",
                 "--vocab", "facebook/opt-1.3b",
                 "--qformer_vocab", "bert-base-embedding",
                 "--dist_url", "tcp://localhost:12345",
