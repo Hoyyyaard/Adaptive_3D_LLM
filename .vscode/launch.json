@@ -684,6 +684,7 @@
                 "--num_finetune_hidden_layers","8",
                 "--use_flex_attn",
                 "--finetune_flex_self_attn",
+                "--use_gt_dense_token"
             ],
             "env": {
                 "LL3DA_ATTN_OP_DIR" : "results/ll3da_attn_op/official",

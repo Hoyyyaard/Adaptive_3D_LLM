@@ -64,6 +64,7 @@ def beam_search_decode(transformer: Callable, **kwargs) -> Tensor:
         'scan_name' : flex_attn_info['scan_name'] * nbeams,
         'qformer_batch_x_attn': flex_attn_info['qformer_batch_x_attn'].repeat(nbeams, 1, 1, 1, 1),
         'qformer_scene_token_xyz': flex_attn_info['qformer_scene_token_xyz'].repeat(nbeams, 1, 1),
+        'flex_gt_dense_token': flex_attn_info['flex_gt_dense_token'].repeat(nbeams, 1, 1, 1) if not flex_attn_info['flex_gt_dense_token'] is None else None
     }
     
     ## prepare storage

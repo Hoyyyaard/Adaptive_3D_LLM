@@ -24,6 +24,7 @@ python -u main.py \
     --eval_every_iteration 1000000 \
     --dist_url tcp://localhost:12445 \
     --save_every 1000000 \
+    --use_beam_search \
     --batchsize_per_gpu 4 --ngpus 8 --base_lr 1e-4 --final_lr 1e-6 \
     --cache_dir results/debug \
     --finetune_flex_self_attn \

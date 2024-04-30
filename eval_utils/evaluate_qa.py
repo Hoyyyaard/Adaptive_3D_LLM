@@ -139,7 +139,7 @@ def evaluate(
         if args.finetune_flex_opt:
             outputs = model(batch_data_label, is_eval=True, task_name='qa')
         else:
-            outputs = model(model_input, is_eval=True, task_name='qa')
+            outputs = model(batch_data_label, is_eval=True, task_name='qa')
         
         attentions=outputs["attentions"]
         

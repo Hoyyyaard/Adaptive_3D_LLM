@@ -67,6 +67,7 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/Adaptive_3D_LLM
     --batchsize_per_gpu 8 --ngpus 4 --base_lr 1e-4 --final_lr 1e-6 \
     --cache_dir results/debug \
     --only_finetune_self_attn \
+    --use_beam_search \
     --num_finetune_hidden_layers 8 \
     --use_flex_attn --max_des_len 128 \
     --slurm_run    \

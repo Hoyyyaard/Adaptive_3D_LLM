@@ -494,6 +494,7 @@ class captioner(nn.Module):
             'qformer_batch_x_attn': qformer_batch_x_attn[0].to(self.dtype),
             'qformer_scene_token_xyz': qformer_batch_x_attn[1].to(self.dtype),
             'scan_name': inputs['scan_name'],
+            'flex_gt_dense_token': inputs.get('flex_gt_dense_token', None)
         }
         
         
@@ -501,10 +502,13 @@ class captioner(nn.Module):
             sample_instruction = instruction[batch_id]     
             sample_mask = instruction_mask[batch_id]     # ntoken
             
+            sample_flex_gt_dense_token = flex_attn_info['flex_gt_dense_token'][batch_id].unsqueeze(0) if not flex_attn_info['flex_gt_dense_token'] is None else None
             sample_flex_attn_info = {
                 'qformer_batch_x_attn': flex_attn_info['qformer_batch_x_attn'][batch_id].unsqueeze(0),
                 'qformer_scene_token_xyz': flex_attn_info['qformer_scene_token_xyz'][batch_id].unsqueeze(0),
                 'scan_name': [inputs['scan_name'][batch_id]],
+                'flex_gt_dense_token': sample_flex_gt_dense_token
+
             }
             
             output = generation(

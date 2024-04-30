@@ -68,6 +68,7 @@ cd /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/Adaptive_3D_LLM
     --cache_dir results/debug \
     --finetune_flex_self_attn \
     --num_finetune_hidden_layers 8 \
+    --use_beam_search \
     --use_flex_attn --max_des_len 128 \
     --slurm_run    \
     --filter_name 'none'  | tee /gpfs/u/home/LMCG/LMCGljnn/scratch/zhy/Adaptive_3D_LLM/${ckpt_dir}/log.log

@@ -344,7 +344,6 @@ def do_train(
             if is_primary():
                 logout(
                     f"Epoch [{curr_epoch}/{args.max_epoch}] "
-                    f"saved current best val checkpoint at {filename}; "
                     f"{args.criterion} {eval_metrics[args.criterion]}"
                 )
         model.train()
@@ -366,7 +365,6 @@ def do_train(
             if is_primary():
                 logout(
                     f"Epoch [{curr_epoch}/{args.max_epoch}] "
-                    f"saved current best val checkpoint at {filename}; "
                     f"{args.criterion} {eval_metrics[args.criterion]}"
                 )
     
