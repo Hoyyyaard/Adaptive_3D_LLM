@@ -212,8 +212,8 @@ class OPTAttention(nn.Module):
             ## FLEX
             if reg_features is not None and hasattr(self, 'encoder_to_llm_projection'):
                 reg_features = self.encoder_to_llm_projection(reg_features)
-                bsz, seq_len, topk, tl, hdim = reg_features.shape
-                hr_key_value_states = reg_features.view(bsz, seq_len, topk*tl, hdim)
+                bsz, seq_len, topk, hdim = reg_features.shape
+                hr_key_value_states = reg_features
                 
                 dense_token_num = hr_key_value_states.shape[2]
                 scene_token_num = 32
@@ -560,19 +560,23 @@ class DenseTokenSelection(nn.Module):
     def __init__(self):
         super().__init__()
         self._query_topk = 4
-        self._scene_token_topk = 1
+        self._scene_token_topk = 2
         
+        '''
         self._sample_nearest_pcd_radius = 0.3
         self._sample_nearest_pcd_npoint = 512
+        '''
         
         self._dense_pcd_dir = 'data/scannet/scannet_data_dense'
         
+        '''
         self._preenc_npoints = 5
         cfg = model_config_flex(self._preenc_npoints)
         self.tokenizer = self._build_preencoder(cfg)
         self.tokenizer = self.tokenizer.float()
         self.encoder = self._build_encoder(cfg)
         self.encoder.interim_downsampling = self.encoder.interim_downsampling.float()
+        '''
         
         self.pcd_dict = {}
         self._preload_dense_pcd()
@@ -654,15 +658,23 @@ class DenseTokenSelection(nn.Module):
         ## [BSZ, 32, TOPK]
         _, argmax_idx = qformer_attn_map.float().topk(k=self._scene_token_topk, dim=-1)
         
-        ## 选出相似度最高的几个SCENE TOKEN
-        argmax_idx = argmax_idx.squeeze(-1)
-        idx = argmax_idx.unsqueeze(1).repeat(1, batch_topk_query.shape[1], 1)
-        batch_select_scene_token_ind = torch.gather(idx, -1, batch_topk_query)
+        batch_select_scene_token_xyz = []
+        batch_select_scene_token_ind = []
+        for per_k in range(len(argmax_idx[0, 0])):
+            idx = argmax_idx[:, :, per_k]
+            ## 选出相似度最高的几个SCENE TOKEN
+            idx = idx.unsqueeze(1).repeat(1, batch_topk_query.shape[1], 1)
+            batch_select_scene_token_ind_perk = torch.gather(idx, -1, batch_topk_query)
+            batch_select_scene_token_ind.append(batch_select_scene_token_ind_perk)
+
+            batch_select_scene_token_ind_perk = batch_select_scene_token_ind_perk.unsqueeze(-1).repeat(1, 1, 1, qformer_scene_token_xyz.shape[-1])
+            batch_select_scene_token_xyz_perk = torch.gather(qformer_scene_token_xyz.unsqueeze(1).repeat(1, batch_topk_query.shape[1], 1, 3), -2, batch_select_scene_token_ind_perk)
+            batch_select_scene_token_xyz.append(batch_select_scene_token_xyz_perk)
         
-        batch_select_scene_token_ind = batch_select_scene_token_ind.unsqueeze(-1).repeat(1, 1, 1, qformer_scene_token_xyz.shape[-1])
-        batch_select_scene_token_xyz = torch.gather(qformer_scene_token_xyz.unsqueeze(1).repeat(1, batch_topk_query.shape[1], 1, 3), -2, batch_select_scene_token_ind)
-        
-        return batch_select_scene_token_xyz
+        batch_select_scene_token_xyz = torch.cat(batch_select_scene_token_xyz, dim=-2)
+        batch_select_scene_token_ind = torch.cat(batch_select_scene_token_ind, dim=-1)
+
+        return batch_select_scene_token_xyz, batch_select_scene_token_ind
 
     
     def _get_batch_scan_dense_pcd(self, batch_scan_name):
@@ -824,8 +836,29 @@ class DenseTokenSelection(nn.Module):
             seq_len = opt_attn_map.shape[-2] - 32
             ## flex_gt_dense_token : [BS, self._query_topk * self._scene_token_topk*self._preenc_npoints, 1, 256]
             enc_features = flex_gt_dense_token.half().repeat(1, seq_len, 1, 1)
-            enc_features = enc_features.view(opt_attn_map.shape[0], seq_len, self._query_topk*self._scene_token_topk, self._preenc_npoints, 256)
+            enc_features = enc_features.view(opt_attn_map.shape[0], seq_len, self._query_topk*self._scene_token_topk, 256)
+        else:
+            ## [BSZ, TEXT_SEQ_LEN, TOPK]
+            batch_topk_query = self._retrive_topk_query_from_text(opt_attn_map)
+            ## batch_select_scene_token_ind : [BSZ, SEQ_LEN, self._scene_token_topk * self._query_topk]
+            batch_topk_select_scene_token_xyz, batch_select_scene_token_ind = self._retrive_topk_scene_token_from_query(qformer_attn_map, qformer_scene_token_xyz, batch_topk_query)
+            ## LOAD PRECOMPUTE DATA HETE
+            cache_dir = '/mnt/nfs/share/Adaptive/LL3DA-FLEX/0501_ALL_LL3DA_TOKEN'
+            enc_xyz = []
+            enc_features = []
+            for bsz in range(len(scan_name)):
+                sn = scan_name[bsz].split('_')[0]
+                info = torch.load(os.path.join(cache_dir, f'{sn}.pt'))
+                enc_features.append(info['region_features'].to(batch_topk_query.device))
+            enc_features = torch.stack(enc_features, dim=0)
 
+            seq_len = opt_attn_map.shape[-2] - 32
+            # [BSZ, SEQ_LEN, 1024, 256]
+            repeat_enc_features = enc_features.unsqueeze(1).repeat(1, seq_len, 1, 1)
+            batch_select_scene_token_ind = batch_select_scene_token_ind.unsqueeze(-1).repeat(1, 1, 1, 256)
+            enc_features = torch.gather(repeat_enc_features, 2, batch_select_scene_token_ind).half().contiguous()
+
+        ''' 旧实现 实时采样编码特征
         else:
             batch_pcd, batch_kd_tree = self._get_batch_scan_dense_pcd(scan_name)
             ## [BSZ, TEXT_SEQ_LEN, TOPK]
@@ -853,6 +886,7 @@ class DenseTokenSelection(nn.Module):
             # enc_xyz = enc_xyz.view(bsz, seq_len, topk, enc_xyz.shape[-2], enc_xyz.shape[-1]).contiguous()
             # enc_inds = enc_inds.view(bsz, seq_len, topk, enc_inds.shape[-1]).contiguous()
             torch.cuda.empty_cache()
+        '''
         return enc_features
 
 class OPTDecoderLayer(nn.Module):

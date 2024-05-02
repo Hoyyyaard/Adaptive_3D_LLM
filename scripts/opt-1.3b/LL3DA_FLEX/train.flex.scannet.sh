@@ -4,7 +4,7 @@ export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export OMP_NUM_THREADS=1
 
-ckpt_dir=ckpts/opt-1.3b/nipus_exp/LL3DA_FLEX/FLEXATTN-8LAYER-GTTOKEN-SCANNET-EVALWOGT
+ckpt_dir=ckpts/opt-1.3b/nipus_exp/LL3DA_FLEX/0502-FLEXATTN-8LAYER-SCANNET
 mkdir -p ${ckpt_dir}
 python -u main.py \
     --use_color --use_normal \
@@ -31,4 +31,4 @@ python -u main.py \
     --num_finetune_hidden_layers 8 \
     --use_flex_attn --max_des_len 128 \
     --filter_name 'none' \
-    --use_gt_dense_token   | tee ${ckpt_dir}/log.log
+    --use_preprocess_all_token   | tee ${ckpt_dir}/log.log

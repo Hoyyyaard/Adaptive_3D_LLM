@@ -106,16 +106,7 @@ def do_train(
     
     max_tolerant_nan = 4
     curr_nan_times = 0
-    
-    if args.preprocess_dense_token:
-        import copy
-        tokenizer = copy.deepcopy(model_no_ddp.detector.tokenizer)
-        sample_point = int(model_no_ddp.captioner.transformer.model.decoder.dense_token_selection._preenc_npoints * \
-                            model_no_ddp.captioner.transformer.model.decoder.dense_token_selection._query_topk * \
-                            model_no_ddp.captioner.transformer.model.decoder.dense_token_selection._scene_token_topk)
-        tokenizer.npoints = sample_point * 2
-        encoder = copy.deepcopy(model_no_ddp.detector.encoder)
-        encoder.interim_downsampling.npoint = sample_point
+
 
     for curr_epoch in tqdm(range(args.start_epoch, args.max_epoch)):
         
@@ -153,6 +144,13 @@ def do_train(
             optimizer.zero_grad()
     
             if args.preprocess_dense_token:
+                import copy
+                tokenizer = copy.deepcopy(model_no_ddp.detector.tokenizer)
+                sample_point = int(model_no_ddp.captioner.transformer.model.decoder.dense_token_selection._query_topk * \
+                                    model_no_ddp.captioner.transformer.model.decoder.dense_token_selection._scene_token_topk)
+                tokenizer.npoints = sample_point * 2 
+                encoder = copy.deepcopy(model_no_ddp.detector.encoder)
+                encoder.interim_downsampling.npoint = sample_point
                 def _break_up_pc(pc):
                     # pc may contain color/normals.
                     xyz = pc[..., 0:3].contiguous()
@@ -203,9 +201,83 @@ def do_train(
                     ## STEP2：采样TOKEN
                     ## STEP3: 生成TOKEN的特征
                     reg_features = _run_encoder(tgt_related_pcd).permute(1, 0, 2)
-                    save_p = os.path.join(base_cache_dir, 'val', task_name, scan_name, f'{scan_idx}.pt')
+                    save_p = os.path.join(base_cache_dir, 'train', task_name, scan_name, f'{scan_idx}.pt')
                     os.makedirs(os.path.dirname(save_p), exist_ok=True)
                     torch.save(reg_features, save_p)
+
+                continue
+            elif args.preprocess_all_token:
+                import copy
+                region_tokenizer = copy.deepcopy(model_no_ddp.detector.tokenizer)
+                region_tokenizer.npoint = 1
+                region_tokenizer.nsample = 1e9
+                encoder = copy.deepcopy(model_no_ddp.detector.encoder)
+                encoder.interim_downsampling.npoint = 1
+                encoder.interim_downsampling.nsample = 1e9
+                encoder.interim_downsampling.radius = region_tokenizer.radius
+                # encoder.masking_radius = [0, 0, 0]
+                run_scene_encoder = model_no_ddp.detector.run_encoder
+
+                ## STEP1: 先将稀疏点云打成1024*256的SCENE TOKEN
+                batch_enc_xyz, batch_enc_features, batch_enc_inds = run_scene_encoder(batch_data_label['point_clouds'])
+                ## [BSZ, 1024, 256]
+                batch_enc_features = batch_enc_features.permute(1, 0, 2)
+                
+                batch_region_features = []
+                batch_rxyz = []
+                for xyz, scan_name in zip(batch_enc_xyz, batch_data_label['scan_name']):
+                    scan_name = scan_name.split('_')[0]
+                    dense_point_clouds = model_no_ddp.captioner.transformer.model.decoder.dense_token_selection.pcd_dict[scan_name][0]
+                    scene_kdt = model_no_ddp.captioner.transformer.model.decoder.dense_token_selection.pcd_dict[scan_name][1]
+                    indexes_list = scene_kdt.query_ball_point(xyz.cpu(), region_tokenizer.radius)
+
+                    ## STEP2: 将1024个SCENE TOKEN所在的点采样所有周围的点并经过TOKENIZER得到一个特征
+                    region_feature_list = []
+                    region_xyz = []
+                    for indexes in indexes_list:
+                        if len(indexes) > 0:
+                            sample_point_clouds = dense_point_clouds[torch.tensor(indexes)].cuda().float()
+                            xyz = sample_point_clouds[..., 0:3].unsqueeze(0).contiguous()
+                            features = sample_point_clouds[..., 3:].unsqueeze(0).transpose(1, 2).contiguous()
+                            ## features: batch x channel x npoints 
+                            rxyz, region_feature, _ = region_tokenizer(xyz, features)
+                            region_feature_list.append(region_feature)
+                            region_xyz.append(rxyz)
+                        else:
+                            region_feature_list.append(torch.zeros(1, 256, 1).cuda().float())
+                            region_xyz.append(torch.ones((1, 1, 3)).cuda().float()*-1e3)
+
+                    ## [1024, 1, 256]
+                    region_feature = torch.cat(region_feature_list, dim=0)
+                    batch_region_features.append(region_feature)
+                    batch_rxyz.append(torch.cat(region_xyz, dim=0))
+
+                batch_region_features = torch.cat(batch_region_features, dim=0).contiguous()
+                batch_rxyz = torch.cat(batch_rxyz, dim=0).contiguous()
+
+                ## npoints x batch x channel features
+                batch_region_features = batch_region_features.permute(2, 0, 1)
+
+                _, batch_region_encoder_features, _ = encoder(
+                    batch_region_features, xyz=batch_rxyz
+                )
+                batch_region_encoder_features = batch_region_encoder_features.permute(1, 0, 2)
+                batch_region_encoder_features = batch_region_encoder_features.view(-1, 1024, 1, 256).squeeze(-2)
+                
+                ## STEP3: 保存
+                for bsz in range(len(batch_data_label['scan_name'])):
+                    scan_name = batch_data_label['scan_name'][bsz].split('_')[0]
+                    cache_file_path = f'/mnt/nfs/share/Adaptive/LL3DA-FLEX/0501_ALL_LL3DA_TOKEN/'
+                    os.makedirs(cache_file_path, exist_ok=True)
+                    save_dict = {
+                        'enc_xyz' : batch_enc_xyz[bsz],
+                        'enc_features' : batch_enc_features[bsz],
+                        'enc_inds' : batch_enc_inds[bsz],
+                        'region_features' : batch_region_encoder_features[bsz],
+                    }
+                    torch.save(save_dict, os.path.join(cache_file_path, f'{scan_name}.pt'))
+
+
 
                 continue
     

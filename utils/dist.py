@@ -71,7 +71,6 @@ def init_slurm_distributed(local_rank):
     torch.cuda.set_device(local_rank)
     proc_id = int(os.environ["SLURM_PROCID"])
     ntasks = int(os.environ["SLURM_NTASKS"])
-    node_list = os.environ["SLURM_NODELIST"]
     dist_backend = "nccl"
     num_gpus = torch.cuda.device_count()
     # addr = subprocess.getoutput(f"scontrol show hostname {node_list} | head -n1")
@@ -92,7 +91,6 @@ def init_slurm_distributed(local_rank):
         backend=dist_backend, rank=(proc_id*num_gpus)+local_rank, world_size=ntasks * num_gpus
     )
     torch.distributed.barrier()
-    return (proc_id*num_gpus)+local_rank
 
 
 def all_reduce_sum(tensor):

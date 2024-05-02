@@ -157,10 +157,14 @@ def make_args_parser():
     parser.add_argument("--ll3da_opt_attn_output", action='store_true')
     ## 用于FLEX-LL3DA
     parser.add_argument("--use_flex_attn", action='store_true')    
-    ## 用于预处理每个EPISODE相关的DENSE TOKEN
+    ## 用于预处理每个EPISODE相关的GT DENSE TOKEN
     parser.add_argument("--preprocess_dense_token", action='store_true')
+    ## 用于预处理与所有场景的 SPARSE SCENE TOKEN 和 DENSE REGION TOKEN
+    parser.add_argument("--preprocess_all_token", action='store_true')
     ## 在LL3DA的FLEX ATTN中使用GT的DENSE SCENE TOKEN
     parser.add_argument("--use_gt_dense_token", action='store_true')
+    ## 使用预处理好的LL3DA TOKEN
+    parser.add_argument("--use_preprocess_all_token", action='store_true')
     
     ## SLURM RUN
     parser.add_argument("--slurm_run", action='store_true')
@@ -201,6 +205,7 @@ def make_args_parser():
     print(f'll3da_opt_attn_output: ', args.ll3da_opt_attn_output)
     print(f'use_flex_attn: ', args.use_flex_attn)
     print(f'preprocess_dense_token: ', args.preprocess_dense_token)
+    print(f'preprocess_all_token: ', args.preprocess_all_token)
     print(f'use_gt_dense_token: ', args.use_gt_dense_token)
     if args.ll3da_opt_attn_output:
         os.environ['ll3da_opt_attn_output'] = 'True'
@@ -213,6 +218,8 @@ def make_args_parser():
         os.environ['finetune_flex_self_attn'] = 'True'
     if args.use_gt_dense_token:
         os.environ['use_gt_dense_token'] = 'True'
+    if args.use_preprocess_all_token:
+        os.environ['use_preprocess_all_token'] = 'True'
     return args
 
 
@@ -401,6 +408,7 @@ def main(local_rank, args):
             
             new_checkpoint = {'model': OrderedDict()}
             new_checkpoint['model'] = copy.deepcopy(checkpoint['model'])
+            '''
             if args.use_flex_attn:
                 ## DENSE TOKEN的编码器跟DETECTOR的一样
                 for k,v in checkpoint['model'].items():
@@ -410,6 +418,7 @@ def main(local_rank, args):
                         new_checkpoint['model'][k.replace('detector.encoder.', 'captioner.transformer.model.decoder.dense_token_selection.encoder.')] = v 
 
                 checkpoint = new_checkpoint
+            '''
                 
             msg = model.load_state_dict(checkpoint['model'], strict=False)
             # if is_primary():

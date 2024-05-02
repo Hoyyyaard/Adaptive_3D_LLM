@@ -311,10 +311,30 @@ class Model_Vote2Cap_DETR(nn.Module):
         inds = None
         if os.getenv("adaptive_pcd_input", 'False') == 'True' and not os.getenv("no_sample_prob", 'False') == 'True':
             inds = torch.multinomial(inputs['sample_prob'], self.tokenizer.npoint, replacement=False).to(point_clouds.device).int()
-            
+        
+        ## enc_features [1024, BSZ, 256]
         enc_xyz, enc_features, enc_inds = self.run_encoder(point_clouds, inds)
+        ## enc_features [BSZ, 256, 1024]
         enc_features = enc_features.permute(1, 2, 0)
         
+        ## LOAD PRECOMPUTE DATA HETE
+        if os.getenv('use_preprocess_all_token', 'False') == 'True':
+            cache_dir = '/mnt/nfs/share/Adaptive/LL3DA-FLEX/0501_ALL_LL3DA_TOKEN'
+            enc_xyz = []
+            enc_features = []
+            enc_inds = []
+            for bsz in range(len(inputs['scan_name'])):
+                scan_name = inputs['scan_name'][bsz].split('_')[0]
+                info = torch.load(os.path.join(cache_dir, f'{scan_name}.pt'), map_location=point_clouds.device)
+                enc_xyz.append(info['enc_xyz'])
+                enc_features.append(info['enc_features'])
+                enc_inds.append(info['enc_inds'])
+            enc_xyz = torch.stack(enc_xyz, dim=0).contiguous()
+            enc_inds = torch.stack(enc_inds, dim=0).contiguous()
+            ## [BS, 1024, 256]
+            enc_features = torch.stack(enc_features, dim=0)
+            enc_features = enc_features.permute(0, 2, 1).contiguous()
+
         ## vote query generation
         query_outputs = self.vote_query_generator(enc_xyz, enc_features)
         query_outputs['seed_inds'] = enc_inds
