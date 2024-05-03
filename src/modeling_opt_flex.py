@@ -728,7 +728,7 @@ class DenseTokenSelection(nn.Module):
             point_cloud = np.concatenate([point_cloud, np.expand_dims(height, 1)], 1)
             
             kd_tree = cKDTree(point_cloud[:, :3])
-            pcd = torch.FloatTensor(point_cloud).half()
+            pcd = torch.FloatTensor(point_cloud)
 
             self.pcd_dict[scan_name] = (pcd, kd_tree, instance_labels)
 
@@ -848,8 +848,8 @@ class DenseTokenSelection(nn.Module):
             enc_features = []
             for bsz in range(len(scan_name)):
                 sn = scan_name[bsz].split('_')[0]
-                info = torch.load(os.path.join(cache_dir, f'{sn}.pt'))
-                enc_features.append(info['region_features'].to(batch_topk_query.device))
+                info = torch.load(os.path.join(cache_dir, f'{sn}.pt'), map_location=batch_topk_query.device)
+                enc_features.append(info['region_features'])
             enc_features = torch.stack(enc_features, dim=0)
 
             seq_len = opt_attn_map.shape[-2] - 32

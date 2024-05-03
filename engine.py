@@ -222,7 +222,7 @@ def do_train(
                 batch_enc_xyz, batch_enc_features, batch_enc_inds = run_scene_encoder(batch_data_label['point_clouds'])
                 ## [BSZ, 1024, 256]
                 batch_enc_features = batch_enc_features.permute(1, 0, 2)
-                
+
                 batch_region_features = []
                 batch_rxyz = []
                 for xyz, scan_name in zip(batch_enc_xyz, batch_data_label['scan_name']):
@@ -264,16 +264,37 @@ def do_train(
                 batch_region_encoder_features = batch_region_encoder_features.permute(1, 0, 2)
                 batch_region_encoder_features = batch_region_encoder_features.view(-1, 1024, 1, 256).squeeze(-2)
                 
+
+                for bsz in range(len(batch_data_label['scan_name'])):
+                    min_x = batch_data_label['point_clouds'][bsz][:, 0].min()
+                    max_x = batch_data_label['point_clouds'][bsz][:, 0].max()
+                    min_y = batch_data_label['point_clouds'][bsz][:, 1].min()
+                    max_y = batch_data_label['point_clouds'][bsz][:, 1].max()
+                    min_z = batch_data_label['point_clouds'][bsz][:, 2].min()
+                    max_z = batch_data_label['point_clouds'][bsz][:, 2].max()
+                    for cor in batch_enc_xyz[bsz]:
+                        if cor[0] < min_x or cor[0] > max_x or cor[1] < min_y or cor[1] > max_y or cor[2] < min_z or cor[2] > max_z:
+                            print("out of bound")
+                            print(cor)
+                            print(min_x)
+                            print(max_x)
+                            print(min_y)
+                            print(max_y)
+                            print(min_z)
+                            print(max_z)
+                            assert False
                 ## STEP3: 保存
                 for bsz in range(len(batch_data_label['scan_name'])):
                     scan_name = batch_data_label['scan_name'][bsz].split('_')[0]
-                    cache_file_path = f'/mnt/nfs/share/Adaptive/LL3DA-FLEX/0501_ALL_LL3DA_TOKEN/'
+                    cache_file_path = f'/mnt/nfs/share/Adaptive/LL3DA-FLEX/0503_ALL_LL3DA_TOKEN/'
                     os.makedirs(cache_file_path, exist_ok=True)
                     save_dict = {
                         'enc_xyz' : batch_enc_xyz[bsz],
                         'enc_features' : batch_enc_features[bsz],
                         'enc_inds' : batch_enc_inds[bsz],
                         'region_features' : batch_region_encoder_features[bsz],
+                        'point_cloud_dims_max': batch_enc_xyz[bsz].max(dim=0),
+                        'point_cloud_dims_min': batch_enc_xyz[bsz].min(dim=0)
                     }
                     torch.save(save_dict, os.path.join(cache_file_path, f'{scan_name}.pt'))
 

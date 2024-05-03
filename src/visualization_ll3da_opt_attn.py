@@ -218,16 +218,16 @@ for qformer_x_attns_p in tqdm(attn_p_list[::5]):
     
     mixed_colors = 0.6 * colors + 0.4 * activation_colors[:,:3]
     
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(point_clouds)
-    pcd.colors = o3d.utility.Vector3dVector(mixed_colors)
-    o3d.visualization.draw_geometries([pcd, *axis_aligned_bounding_box_list])
+    # pcd = o3d.geometry.PointCloud()
+    # pcd.points = o3d.utility.Vector3dVector(point_clouds)
+    # pcd.colors = o3d.utility.Vector3dVector(mixed_colors)
+    # o3d.visualization.draw_geometries([pcd, *axis_aligned_bounding_box_list])
     
     
     for visual_layer in range(8, 24):
         visual_layer = 20
         ks = [1, 2]
-        # plot_attention_map(opt_attn_map[visual_layer])
+        plot_attention_map(opt_attn_map[visual_layer])
         for k in ks:
             layer_opt_attn_map = opt_attn_map[visual_layer]
             

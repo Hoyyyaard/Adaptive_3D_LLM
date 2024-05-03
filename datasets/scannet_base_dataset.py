@@ -190,7 +190,9 @@ class ScanNetBaseDataset(Dataset):
         self.use_normal = use_normal
         self.use_multiview = use_multiview
         self.use_height = use_height
-        self.augment = augment
+        # self.augment = augment
+        ## REMEMBER HERE
+        self.augment = 'False'
         self.use_random_cuboid = use_random_cuboid
         self.random_cuboid_augmentor = RandomCuboid(min_points=random_cuboid_min_points)
         self.center_normalizing_range = [
@@ -262,8 +264,8 @@ class ScanNetBaseDataset(Dataset):
             )
             instance_labels = per_point_labels[0]
             semantic_labels = per_point_labels[1]
-        # Pcs: 50w > 4w
-        ## USer
+
+
         self.num_points = 40000
         
         point_cloud, choices = pc_util.random_sampling(
@@ -280,7 +282,6 @@ class ScanNetBaseDataset(Dataset):
 
         # ------------------------------- DATA AUGMENTATION ------------------------------
         ## USer
-        # self.augment = False
         if self.augment:
 
             if np.random.random() > 0.5:

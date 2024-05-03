@@ -28,7 +28,7 @@ class Dataset(ScanNetBaseDataset):
         use_height=False,
         augment=False,
     ):
-        # split_set="val"
+        augment = False
         super().__init__(
             args,
             dataset_config,

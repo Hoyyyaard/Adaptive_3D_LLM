@@ -319,21 +319,26 @@ class Model_Vote2Cap_DETR(nn.Module):
         
         ## LOAD PRECOMPUTE DATA HETE
         if os.getenv('use_preprocess_all_token', 'False') == 'True':
-            cache_dir = '/mnt/nfs/share/Adaptive/LL3DA-FLEX/0501_ALL_LL3DA_TOKEN'
+            cache_dir = '/mnt/nfs/share/Adaptive/LL3DA-FLEX/0503_ALL_LL3DA_TOKEN'
             enc_xyz = []
             enc_features = []
             enc_inds = []
+            point_cloud_dims_min = []
+            point_cloud_dims_max = []
             for bsz in range(len(inputs['scan_name'])):
                 scan_name = inputs['scan_name'][bsz].split('_')[0]
                 info = torch.load(os.path.join(cache_dir, f'{scan_name}.pt'), map_location=point_clouds.device)
                 enc_xyz.append(info['enc_xyz'])
                 enc_features.append(info['enc_features'])
                 enc_inds.append(info['enc_inds'])
+                point_cloud_dims_min.append(info['point_cloud_dims_min'][0])
+                point_cloud_dims_max.append(info['point_cloud_dims_max'][0])
             enc_xyz = torch.stack(enc_xyz, dim=0).contiguous()
             enc_inds = torch.stack(enc_inds, dim=0).contiguous()
             ## [BS, 1024, 256]
             enc_features = torch.stack(enc_features, dim=0)
             enc_features = enc_features.permute(0, 2, 1).contiguous()
+            point_cloud_dims = [torch.stack(point_cloud_dims_min, dim=0), torch.stack(point_cloud_dims_max, dim=0)]
 
         ## vote query generation
         query_outputs = self.vote_query_generator(enc_xyz, enc_features)
