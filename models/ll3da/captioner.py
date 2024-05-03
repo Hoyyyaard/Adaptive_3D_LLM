@@ -190,11 +190,14 @@ class captioner(nn.Module):
         
         ## caption generation cores
         from src.modeling_opt_flex import OPTForCausalLM
-        self.transformer = OPTForCausalLM.from_pretrained('ckpts/opt-model', config=config, torch_dtype=self.dtype)
-        # self.transformer = AutoModelForCausalLM.from_pretrained(
-        #     args.vocab,
-        #     torch_dtype=self.dtype,
-        # )
+        if args.vocab.find('opt') != -1:
+            self.transformer = OPTForCausalLM.from_pretrained('ckpts/opt-model', config=config, torch_dtype=self.dtype)
+        else:
+            print('USE OTHER LLM: ', args.vocab)
+            self.transformer = AutoModelForCausalLM.from_pretrained(
+                args.vocab,
+                torch_dtype=self.dtype,
+            )
         
         self.n_embd = self.transformer.config.hidden_size
         

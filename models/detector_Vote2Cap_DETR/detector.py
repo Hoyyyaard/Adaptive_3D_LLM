@@ -319,7 +319,7 @@ class Model_Vote2Cap_DETR(nn.Module):
         
         ## LOAD PRECOMPUTE DATA HETE
         if os.getenv('use_preprocess_all_token', 'False') == 'True':
-            cache_dir = '/mnt/nfs/share/Adaptive/LL3DA-FLEX/0503_ALL_LL3DA_TOKEN'
+            cache_dir = 'results/LL3DA-FLEX/0503_ALL_LL3DA_TOKEN'
             enc_xyz = []
             enc_features = []
             enc_inds = []

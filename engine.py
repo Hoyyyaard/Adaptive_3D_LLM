@@ -286,7 +286,7 @@ def do_train(
                 ## STEP3: 保存
                 for bsz in range(len(batch_data_label['scan_name'])):
                     scan_name = batch_data_label['scan_name'][bsz].split('_')[0]
-                    cache_file_path = f'/mnt/nfs/share/Adaptive/LL3DA-FLEX/0503_ALL_LL3DA_TOKEN/'
+                    cache_file_path = f'results/LL3DA-FLEX/0503_ALL_LL3DA_TOKEN/'
                     os.makedirs(cache_file_path, exist_ok=True)
                     save_dict = {
                         'enc_xyz' : batch_enc_xyz[bsz],

@@ -832,7 +832,8 @@ class DenseTokenSelection(nn.Module):
     
     @torch.no_grad()
     def forward(self, opt_attn_map, qformer_attn_map, qformer_scene_token_xyz, scan_name, flex_gt_dense_token=None):
-        if os.getenv('use_gt_dense_token','False') == 'True' and self.training:
+        if os.getenv('use_gt_dense_token','False') == 'True' and  \
+            (self.training or os.getenv('use_gt_dense_token_on_eval','False') == 'True'):
             seq_len = opt_attn_map.shape[-2] - 32
             ## flex_gt_dense_token : [BS, self._query_topk * self._scene_token_topk*self._preenc_npoints, 1, 256]
             enc_features = flex_gt_dense_token.half().repeat(1, seq_len, 1, 1)
@@ -843,7 +844,7 @@ class DenseTokenSelection(nn.Module):
             ## batch_select_scene_token_ind : [BSZ, SEQ_LEN, self._scene_token_topk * self._query_topk]
             batch_topk_select_scene_token_xyz, batch_select_scene_token_ind = self._retrive_topk_scene_token_from_query(qformer_attn_map, qformer_scene_token_xyz, batch_topk_query)
             ## LOAD PRECOMPUTE DATA HETE
-            cache_dir = '/mnt/nfs/share/Adaptive/LL3DA-FLEX/0501_ALL_LL3DA_TOKEN'
+            cache_dir = 'results/LL3DA-FLEX/0503_ALL_LL3DA_TOKEN'
             enc_xyz = []
             enc_features = []
             for bsz in range(len(scan_name)):

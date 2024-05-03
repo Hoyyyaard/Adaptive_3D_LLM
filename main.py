@@ -161,8 +161,10 @@ def make_args_parser():
     parser.add_argument("--preprocess_dense_token", action='store_true')
     ## 用于预处理与所有场景的 SPARSE SCENE TOKEN 和 DENSE REGION TOKEN
     parser.add_argument("--preprocess_all_token", action='store_true')
-    ## 在LL3DA的FLEX ATTN中使用GT的DENSE SCENE TOKEN
+    ## 在LL3DA的FLEX ATTN 训练中使用GT的DENSE SCENE TOKEN
     parser.add_argument("--use_gt_dense_token", action='store_true')
+    ## 在LL3DA的FLEX ATTN 测试中使用GT的DENSE SCENE TOKEN
+    parser.add_argument("--use_gt_dense_token_on_eval", action='store_true')
     ## 使用预处理好的LL3DA TOKEN
     parser.add_argument("--use_preprocess_all_token", action='store_true')
     
@@ -218,6 +220,9 @@ def make_args_parser():
         os.environ['finetune_flex_self_attn'] = 'True'
     if args.use_gt_dense_token:
         os.environ['use_gt_dense_token'] = 'True'
+    if args.use_gt_dense_token_on_eval:
+        assert args.use_gt_dense_token
+        os.environ['use_gt_dense_token_on_eval'] = 'True'
     if args.use_preprocess_all_token:
         os.environ['use_preprocess_all_token'] = 'True'
     return args
